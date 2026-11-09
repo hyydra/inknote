@@ -7,7 +7,8 @@ InkNote is a Flutter prototype for handwritten notes on Android and Windows. It 
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
 - On Android, the cloud-sync button lets the user select a Google Drive folder through the system folder picker. Sync is two-way and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
-- JSON persistence in application documents directory (one file per note).
+- Versioned JSON persistence in the application documents directory, with atomic replacement, a previous-version backup and automatic recovery after interrupted writes.
+- Background autosave for every note, with Saved, Unsaved, Saving and Save failed states in the editor.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Flutter shared source for Android and Windows.
 
@@ -26,12 +27,11 @@ InkNote is a Flutter prototype for handwritten notes on Android and Windows. It 
 
 ## Known limitations / future work
 - Google Drive folder sync currently runs manually on Android. Windows folder selection, background sync, encryption and conflict copies are not yet implemented; keep backups for important notes.
-- Rendering uses fixed canvas coordinates and does not yet support pan/zoom, selection, text boxes, PDF, images, searchable handwriting, stylus pressure, or background autosave. The launcher canvas saves completed ink gestures and text edits automatically. For other notes, use Save or leave the editor to save your changes.
+- Rendering uses fixed canvas coordinates and does not yet support pan/zoom, selection, text boxes, PDF, images, searchable handwriting or stylus pressure.
 - Single pinned preview is shared by all widget instances; current preview is image-only and opens the app rather than a specific note.
 - Android launcher widgets use `RemoteViews`, so they cannot capture continuous pen or finger strokes directly. Tapping the page-sized widget opens the app straight into the writable launcher canvas.
 - The widget preview is 700×420 and currently renders a lined background. Scaling to widget size may distort aspect ratio.
 - A future release should provide proper widget instance selection, note-specific deep links, refresh on sync and screen-reader descriptions.
-- The local file replacement is not crash-atomic on all OSes; add robust backups and migration tests.
 - Android widget bitmap should be size-constrained, downsampled according to system limits, and tested on Android 16/17 devices.
 
 ## Tech

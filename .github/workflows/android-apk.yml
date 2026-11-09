@@ -2,11 +2,14 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'inknote/**'
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android_widget/**'
       - 'lib/**'
+      - 'test/**'
       - 'pubspec.yaml'
 
 permissions:
@@ -33,7 +36,7 @@ jobs:
           android="$project/android/app/src/main"
           sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "27.0.12077973"/' "$project/android/app/build.gradle.kts"
           cp pubspec.yaml "$project/"
-          cp lib/main.dart "$project/lib/"
+          cp -R lib/. "$project/lib/"
           cp android_widget/kotlin/*.kt "$android/kotlin/com/hyydra/inknote/"
           cp -R android_widget/res/. "$android/res/"
           python3 - "$android/AndroidManifest.xml" <<'PY'
@@ -47,6 +50,9 @@ jobs:
           PY
       - name: Build ARM64 debug APK
         run: |
+          dart test/autosave_controller_test.dart
+          dart test/note_data_test.dart
+          dart test/note_store_test.dart
           cd "$RUNNER_TEMP/inknote"
           flutter pub get
           flutter build apk --debug --target-platform android-arm64
