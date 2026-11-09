@@ -33,6 +33,7 @@ class InkNoteWidget : AppWidgetProvider() {
             if (intent != null) {
                 val pending = PendingIntent.getActivity(context, 0, intent,
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                views.setOnClickPendingIntent(R.id.widget_root, pending)
                 views.setOnClickPendingIntent(R.id.widget_image, pending)
             }
             manager.updateAppWidget(id, views)
