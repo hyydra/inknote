@@ -37,3 +37,5 @@
 
 ## Tech
 Flutter/Dart UI, Kotlin native Android widget (RemoteViews), JSON files, `path_provider`, `uuid`.
+
+Android application ID for Play testing: `com.hyydra.inknote`.

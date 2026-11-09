@@ -1,4 +1,4 @@
-package com.example.inknote
+package com.hyydra.inknote
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
