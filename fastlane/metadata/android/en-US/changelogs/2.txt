@@ -1,0 +1,1 @@
+Adds typed text, checklists, paper styles, a launcher canvas, a resizable widget and manual folder sync on Android.
