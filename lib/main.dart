@@ -237,6 +237,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _finalizeActiveStroke();
       unawaited(autosave.saveNow());
     }
   }
@@ -274,15 +275,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     setState(() => active!.points.add(InkPoint(p.dx, p.dy)));
   }
 
-  void end() {
-    if (active != null) {
-      setState(() {
-        widget.note.strokes.add(active!);
-        active = null;
-        undone.clear();
-      });
-      _markChanged();
-    }
+  void end() => _finalizeActiveStroke();
+
+  void _finalizeActiveStroke() {
+    if (!commitActiveStroke(widget.note.strokes, active)) return;
+    setState(() {
+      active = null;
+      undone.clear();
+    });
+    _markChanged();
   }
 
   void erase(Offset p) {

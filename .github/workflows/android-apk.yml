@@ -53,6 +53,8 @@ jobs:
           dart test/autosave_controller_test.dart
           dart test/note_data_test.dart
           dart test/note_store_test.dart
+          dart test/note_store_failure_test.dart
+          dart test/stroke_commit_test.dart
           cd "$RUNNER_TEMP/inknote"
           flutter pub get
           flutter build apk --debug --target-platform android-arm64

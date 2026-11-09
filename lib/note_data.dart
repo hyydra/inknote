@@ -46,6 +46,14 @@ class Stroke {
   };
 }
 
+bool commitActiveStroke(List<Stroke> strokes, Stroke? active) {
+  if (active == null) {
+    return false;
+  }
+  strokes.add(active);
+  return true;
+}
+
 class TaskItem {
   String text;
   bool done;

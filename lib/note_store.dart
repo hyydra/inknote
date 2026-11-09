@@ -4,12 +4,24 @@ import 'dart:io';
 import 'note_data.dart';
 
 typedef NoteDirectoryProvider = Future<Directory> Function();
+typedef SaveStageHook = Future<void> Function(SaveStage stage);
+
+enum SaveStage {
+  temporaryWritten,
+  backupWritten,
+  backupPublished,
+  primaryRemoved,
+  primaryPublished,
+}
 
 class NoteStore {
+  static final RegExp _safeNoteId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
   final NoteDirectoryProvider directoryProvider;
+  final SaveStageHook? afterSaveStage;
   Future<void> _saveQueue = Future<void>.value();
 
-  NoteStore({required this.directoryProvider});
+  NoteStore({required this.directoryProvider, this.afterSaveStage});
 
   Future<Directory> get folder async {
     final directory = await directoryProvider();
@@ -35,7 +47,10 @@ class NoteStore {
         '.json.bak.tmp',
       ]) {
         if (name.endsWith(suffix)) {
-          noteIds.add(name.substring(0, name.length - suffix.length));
+          final noteId = name.substring(0, name.length - suffix.length);
+          if (_safeNoteId.hasMatch(noteId)) {
+            noteIds.add(noteId);
+          }
           break;
         }
       }
@@ -44,10 +59,10 @@ class NoteStore {
     for (final noteId in noteIds) {
       final primary = File('${directory.path}/$noteId.json');
       final candidates = [
-        primary,
         File('${primary.path}.tmp'),
-        File('${primary.path}.bak'),
+        primary,
         File('${primary.path}.bak.tmp'),
+        File('${primary.path}.bak'),
       ];
       final valid = <(File, Note)>[];
       for (final candidate in candidates) {
@@ -56,10 +71,10 @@ class NoteStore {
         }
         try {
           final value = jsonDecode(await candidate.readAsString());
-          valid.add((
-            candidate,
-            Note.fromJson(Map<String, dynamic>.from(value as Map)),
-          ));
+          final note = Note.fromJson(Map<String, dynamic>.from(value as Map));
+          if (note.id == noteId && _safeNoteId.hasMatch(note.id)) {
+            valid.add((candidate, note));
+          }
         } catch (_) {
           // Keep damaged files for recovery or manual inspection.
         }
@@ -68,9 +83,6 @@ class NoteStore {
         continue;
       }
 
-      valid.sort(
-        (first, second) => second.$2.updated.compareTo(first.$2.updated),
-      );
       final selected = valid.first;
       if (selected.$1.path != primary.path) {
         final primaryIsValid = valid.any(
@@ -91,6 +103,7 @@ class NoteStore {
   }
 
   Future<void> save(Note note) {
+    _validateNoteId(note.id);
     final encoded = jsonEncode(note.toJson());
     final operation = _saveQueue.then((_) => _save(note.id, encoded));
     _saveQueue = operation.then<void>((_) {}, onError: (_) {});
@@ -105,20 +118,25 @@ class NoteStore {
     final backupTemporary = File('${backup.path}.tmp');
 
     await temporary.writeAsString(encoded, flush: true);
+    await afterSaveStage?.call(SaveStage.temporaryWritten);
     if (await primary.exists()) {
       await backupTemporary.writeAsBytes(
         await primary.readAsBytes(),
         flush: true,
       );
+      await afterSaveStage?.call(SaveStage.backupWritten);
       if (await backup.exists()) {
         await backup.delete();
       }
       await backupTemporary.rename(backup.path);
+      await afterSaveStage?.call(SaveStage.backupPublished);
       await primary.delete();
+      await afterSaveStage?.call(SaveStage.primaryRemoved);
     }
 
     try {
       await temporary.rename(primary.path);
+      await afterSaveStage?.call(SaveStage.primaryPublished);
     } catch (_) {
       if (!await primary.exists() && await backup.exists()) {
         await primary.writeAsBytes(await backup.readAsBytes(), flush: true);
@@ -128,12 +146,19 @@ class NoteStore {
   }
 
   Future<void> delete(Note note) async {
+    _validateNoteId(note.id);
     final directory = await folder;
     for (final suffix in ['.json', '.json.tmp', '.json.bak', '.json.bak.tmp']) {
       final file = File('${directory.path}/${note.id}$suffix');
       if (await file.exists()) {
         await file.delete();
       }
+    }
+  }
+
+  void _validateNoteId(String noteId) {
+    if (!_safeNoteId.hasMatch(noteId)) {
+      throw FormatException('Unsafe note id');
     }
   }
 }

@@ -60,7 +60,7 @@ Future<void> main() async {
 
     final newest = note(
       'Interrupted new version',
-      DateTime.utc(2026, 11, 9, 12),
+      DateTime.utc(2026, 11, 9, 9),
     );
     await File('${directory.path}/note-1.json.tmp')
         .writeAsString(jsonEncode(newest.toJson()), flush: true);
@@ -97,6 +97,31 @@ Future<void> main() async {
       'damaged primary is retained for manual recovery',
     );
     print('PASS corrupt primary recovers without deleting damaged data');
+
+    var rejectedUnsafeId = false;
+    try {
+      await store.save(
+        Note(
+          id: '../../outside-inknote',
+          title: 'Unsafe',
+          updated: DateTime.utc(2026, 11, 9, 13),
+          strokes: [],
+        ),
+      );
+    } on FormatException {
+      rejectedUnsafeId = true;
+    }
+    expectEqual(
+      rejectedUnsafeId,
+      true,
+      'path traversal note id is rejected at the storage boundary',
+    );
+    expectEqual(
+      await File('${directory.parent.path}/outside-inknote.json').exists(),
+      false,
+      'unsafe note id cannot write outside the note directory',
+    );
+    print('PASS unsafe note id cannot escape the note directory');
   } finally {
     await directory.delete(recursive: true);
   }
