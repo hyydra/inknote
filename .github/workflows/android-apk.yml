@@ -1,0 +1,57 @@
+name: Build Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-apk.yml'
+      - 'android_widget/**'
+      - 'lib/**'
+      - 'pubspec.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: stable
+      - name: Generate Android project and integrate widget
+        run: |
+          flutter create --no-pub --platforms=android --org com.example "$RUNNER_TEMP/inknote"
+          project="$RUNNER_TEMP/inknote"
+          android="$project/android/app/src/main"
+          cp pubspec.yaml "$project/"
+          cp lib/main.dart "$project/lib/"
+          cp android_widget/kotlin/*.kt "$android/kotlin/com/example/inknote/"
+          cp -R android_widget/res/. "$android/res/"
+          python3 - "$android/AndroidManifest.xml" <<'PY'
+          import sys
+          from pathlib import Path
+
+          manifest = Path(sys.argv[1])
+          receiver = Path("android_widget/manifest_snippet.xml").read_text().split("\n", 1)[1]
+          text = manifest.read_text().replace('android:label="inknote"', 'android:label="InkNote"')
+          manifest.write_text(text.replace("</application>", receiver + "    </application>"))
+          PY
+      - name: Build ARM64 debug APK
+        run: |
+          cd "$RUNNER_TEMP/inknote"
+          flutter pub get
+          flutter build apk --debug --target-platform android-arm64
+          cp build/app/outputs/flutter-apk/app-debug.apk "$RUNNER_TEMP/InkNote.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InkNote-Android
+          path: ${{ runner.temp }}/InkNote.apk
+          if-no-files-found: error
