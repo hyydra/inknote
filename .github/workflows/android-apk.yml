@@ -31,6 +31,7 @@ jobs:
           flutter create --no-pub --platforms=android --org com.example "$RUNNER_TEMP/inknote"
           project="$RUNNER_TEMP/inknote"
           android="$project/android/app/src/main"
+          sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "27.0.12077973"/' "$project/android/app/build.gradle.kts"
           cp pubspec.yaml "$project/"
           cp lib/main.dart "$project/lib/"
           cp android_widget/kotlin/*.kt "$android/kotlin/com/example/inknote/"
