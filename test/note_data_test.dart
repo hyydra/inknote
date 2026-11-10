@@ -46,6 +46,20 @@ Future<void> main() async {
     'First block|Second block',
     'multiple text blocks survive serialization',
   );
+  blocksRoundTrip.textBlockFormats.first
+    ..x = 123
+    ..y = 234
+    ..width = 456
+    ..height = 178;
+  final positionedRoundTrip = Note.fromJson(blocksRoundTrip.toJson());
+  expectEqual(positionedRoundTrip.textBlockFormats.first.x, 123.0,
+      'text block x position survives serialization');
+  expectEqual(positionedRoundTrip.textBlockFormats.first.y, 234.0,
+      'text block y position survives serialization');
+  expectEqual(positionedRoundTrip.textBlockFormats.first.width, 456.0,
+      'text block width survives serialization');
+  expectEqual(positionedRoundTrip.textBlockFormats.first.height, 178.0,
+      'text block height survives serialization');
   print('PASS multiple text blocks survive serialization');
 
   var rejectedFutureVersion = false;

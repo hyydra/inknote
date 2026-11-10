@@ -27,7 +27,7 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 - On Android, the cloud-sync button selects a Google Drive folder through the system folder picker. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
 - Versioned JSON persistence in the application documents directory, with atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background autosave for every editor change, with Saved, Unsaved, Saving and Save failed states.
-- Multiple independently editable, transparent text blocks in a scrollable panel, with a dedicated text toolbar that is always visible in the editor.
+- Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds and can be moved or resized with their selection handles; a dedicated text toolbar stays visible in the editor.
 - A bottom drawing toolbar on Android, keeping tools within thumb reach while leaving the canvas visible.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
@@ -51,7 +51,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.3` builds and publishes three assets:
+Pushing a version tag such as `v0.4.4` builds and publishes three assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.
