@@ -1,0 +1,1 @@
+Adds signed GitHub releases and automatic updates for Android and Windows.

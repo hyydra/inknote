@@ -1,7 +1,7 @@
 name: inknote
 description: A handwriting-first note app for Android and Windows.
 publish_to: none
-version: 0.2.0+2
+version: 0.3.0+3
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:
@@ -9,5 +9,9 @@ dependencies:
     sdk: flutter
   path_provider: ^2.1.5
   uuid: ^4.5.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
 flutter:
   uses-material-design: true

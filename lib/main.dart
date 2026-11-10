@@ -8,6 +8,147 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+const inkNoteVersion =
+    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.3.0');
+
+class UpdateInfo {
+  final String version;
+  final String downloadUrl;
+  final String fileName;
+  const UpdateInfo(this.version, this.downloadUrl, this.fileName);
+}
+
+class UpdateService {
+  static const _channel = MethodChannel('inknote/update');
+  static bool _checked = false;
+
+  static List<int> _parts(String value) => value
+      .replaceFirst(RegExp(r'^[vV]'), '')
+      .split('.')
+      .map((part) => int.tryParse(RegExp(r'^\d+').stringMatch(part) ?? '') ?? 0)
+      .toList();
+
+  static bool _isNewer(String candidate, String current) {
+    final a = _parts(candidate);
+    final b = _parts(current);
+    for (var i = 0; i < math.max(a.length, b.length); i++) {
+      final left = i < a.length ? a[i] : 0;
+      final right = i < b.length ? b[i] : 0;
+      if (left != right) return left > right;
+    }
+    return false;
+  }
+
+  static Future<UpdateInfo?> check() async {
+    if (!Platform.isAndroid && !Platform.isWindows) return null;
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(
+          'https://api.github.com/repos/hyydra/inknote/releases/latest'));
+      request.headers
+        ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
+        ..set(HttpHeaders.userAgentHeader, 'InkNote/$inkNoteVersion');
+      final response = await request.close();
+      if (response.statusCode != HttpStatus.ok) return null;
+      final release = jsonDecode(await response.transform(utf8.decoder).join())
+          as Map<String, dynamic>;
+      final version =
+          (release['tag_name'] as String? ?? '').replaceFirst('v', '');
+      if (!_isNewer(version, inkNoteVersion)) return null;
+      final suffix = Platform.isAndroid ? '.apk' : '.zip';
+      final assets =
+          (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
+      final asset = assets.where((item) =>
+          (item['name'] as String? ?? '').toLowerCase().endsWith(suffix));
+      if (asset.isEmpty) return null;
+      final selected = asset.first;
+      return UpdateInfo(version, selected['browser_download_url'] as String,
+          selected['name'] as String);
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<void> prompt(BuildContext context,
+      {bool automatic = false}) async {
+    if (automatic && _checked) return;
+    _checked = true;
+    final update = await check();
+    if (!context.mounted) return;
+    if (update == null) {
+      if (!automatic) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('InkNote is up to date.')));
+      }
+      return;
+    }
+    final install = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('InkNote update available'),
+              content: Text(
+                  'Version ${update.version} is available. Download and install it now?'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Later')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Update')),
+              ],
+            ));
+    if (install != true || !context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Downloading update…')));
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(update.downloadUrl));
+      final response = await request.close();
+      if (response.statusCode != HttpStatus.ok) {
+        throw HttpException('Download failed (${response.statusCode})');
+      }
+      final file = File(
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}${update.fileName}');
+      final sink = file.openWrite();
+      await response.pipe(sink);
+      if (Platform.isAndroid) {
+        await _channel.invokeMethod('install', {'path': file.path});
+      } else {
+        final app = Platform.resolvedExecutable;
+        final installDir = File(app).parent.path;
+        String quoted(String value) => value.replaceAll("'", "''");
+        final script = File('${file.path}.ps1');
+        await script.writeAsString('''
+param([int]\$InkNotePid)
+Wait-Process -Id \$InkNotePid -ErrorAction SilentlyContinue
+Expand-Archive -LiteralPath '${quoted(file.path)}' -DestinationPath '${quoted(installDir)}' -Force
+Start-Process -FilePath '${quoted(app)}'
+Remove-Item -LiteralPath \$PSCommandPath -Force
+''');
+        await Process.start(
+            'powershell',
+            [
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-File',
+              script.path,
+              pid.toString()
+            ],
+            mode: ProcessStartMode.detached);
+        exit(0);
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Update failed: $error')));
+      }
+    } finally {
+      client.close();
+    }
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const InkNoteApp());
@@ -183,7 +324,11 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
             strokes: [],
           )
         : existing.first;
-    if (mounted) setState(() => note = loaded);
+    if (mounted) {
+      setState(() => note = loaded);
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => UpdateService.prompt(context, automatic: true));
+    }
   }
 
   @override
@@ -666,6 +811,10 @@ class _EditorPageState extends State<EditorPage> {
                         case 'sync':
                           syncDrive();
                           return;
+                        case 'update':
+                          save(showMessage: false)
+                              .then((_) => UpdateService.prompt(context));
+                          return;
                       }
                     },
                     itemBuilder: (_) => [
@@ -697,7 +846,12 @@ class _EditorPageState extends State<EditorPage> {
                               value: 'sync',
                               child: ListTile(
                                   leading: Icon(Icons.cloud_sync_outlined),
-                                  title: Text('Sync Drive folder')))
+                                  title: Text('Sync Drive folder'))),
+                          const PopupMenuItem(
+                              value: 'update',
+                              child: ListTile(
+                                  leading: Icon(Icons.system_update_outlined),
+                                  title: Text('Check for updates')))
                         ])
               ]),
           body: Column(children: [
