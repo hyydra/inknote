@@ -42,7 +42,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
       - name: Generate and build Linux project
         run: |
-          project="$RUNNER_TEMP/pennino"
+          project="$RUNNER_TEMP/notes_app"
           flutter create --no-pub --platforms=linux --org com.hyydra "$project"
           cp pubspec.yaml "$project/"
           cp -R lib/. "$project/lib/"

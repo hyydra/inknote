@@ -1,6 +1,6 @@
 // ignore_for_file: avoid_print
 
-import 'package:pennino/note_data.dart';
+import 'package:notes_app/note_data.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {
@@ -11,7 +11,7 @@ void expectEqual(Object? actual, Object? expected, String message) {
 void main() {
   final strokes = <Stroke>[];
   final active = Stroke(
-    points: const [InkPoint(10, 10), InkPoint(20, 20)],
+    points: const [CanvasPoint(10, 10), CanvasPoint(20, 20)],
     color: 0xff000000,
     width: 3,
     highlight: false,

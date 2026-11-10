@@ -13,7 +13,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.hyydra.pennino"
+    namespace = "com.hyydra.notes"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
 

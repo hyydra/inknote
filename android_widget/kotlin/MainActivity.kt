@@ -1,4 +1,4 @@
-package com.hyydra.pennino
+package com.hyydra.notes
 
 import android.app.Activity
 import android.content.Context
@@ -17,7 +17,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pennino/widget")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "notes/widget")
             .setMethodCallHandler { call, result ->
                 if (call.method != "setNote") {
                     result.notImplemented()
@@ -26,18 +26,18 @@ class MainActivity : FlutterActivity() {
                 try {
                     val title = call.argument<String>("title") ?: "Pennino"
                     val base64 = call.argument<String>("png") ?: ""
-                    File(filesDir, "pennino_widget.png")
+                    File(filesDir, "notes_widget.png")
                         .writeBytes(Base64.decode(base64, Base64.DEFAULT))
-                    getSharedPreferences("pennino_widget", Context.MODE_PRIVATE)
+                    getSharedPreferences("notes_widget", Context.MODE_PRIVATE)
                         .edit().putString("title", title).apply()
-                    PenninoWidget.updateAll(this)
+                    NotesWidget.updateAll(this)
                     result.success(null)
                 } catch (error: Exception) {
                     result.error("widget", error.message, null)
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pennino/sync")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "notes/sync")
             .setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
@@ -58,7 +58,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun folderUri(): Uri? =
-        getSharedPreferences("pennino_sync", Context.MODE_PRIVATE)
+        getSharedPreferences("notes_sync", Context.MODE_PRIVATE)
             .getString("folder_uri", null)?.let(Uri::parse)
 
     private fun chooseFolder(result: MethodChannel.Result) {
@@ -90,7 +90,7 @@ class MainActivity : FlutterActivity() {
         val flags = (data?.flags ?: 0) and
             (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         contentResolver.takePersistableUriPermission(uri, flags)
-        getSharedPreferences("pennino_sync", Context.MODE_PRIVATE)
+        getSharedPreferences("notes_sync", Context.MODE_PRIVATE)
             .edit().putString("folder_uri", uri.toString()).apply()
         result?.success(true)
     }

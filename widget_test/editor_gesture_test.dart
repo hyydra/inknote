@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pennino/main.dart';
-import 'package:pennino/note_data.dart';
+import 'package:notes_app/main.dart';
+import 'package:notes_app/note_data.dart';
 
 Note noteWithStroke() => Note(
       id: 'gesture-note',
@@ -9,7 +9,7 @@ Note noteWithStroke() => Note(
       updated: DateTime.utc(2026, 11, 10),
       strokes: [
         Stroke(
-          points: const [InkPoint(100, 100), InkPoint(200, 100)],
+          points: const [CanvasPoint(100, 100), CanvasPoint(200, 100)],
           color: 0xff000000,
           width: 4,
           highlight: false,
@@ -18,7 +18,8 @@ Note noteWithStroke() => Note(
     );
 
 void main() {
-  testWidgets('a stationary tap creates an undoable ink point', (tester) async {
+  testWidgets('a stationary tap creates an undoable stroke point',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -82,5 +83,48 @@ void main() {
       tester.widget<TextField>(firstBlock).decoration?.fillColor,
       Colors.transparent,
     );
+  });
+
+  testWidgets('text tools have a dedicated always-visible toolbar',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(home: EditorPage(note: noteWithStroke())),
+    );
+
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(find.text('Text blocks'), findsOneWidget);
+    expect(find.text('Add text block'), findsWidgets);
+
+    await tester.tap(find.text('Text blocks'));
+    await tester.pump();
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.hintText == 'Text block 1',
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    expect(find.text('1 text block'), findsOneWidget);
+  });
+
+  testWidgets('Windows displays automatic update status and version',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    expect(find.text('Auto updates · v$appVersion'), findsOneWidget);
+    expect(find.byTooltip('Check for updates'), findsWidgets);
   });
 }

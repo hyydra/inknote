@@ -13,13 +13,13 @@ class CanvasTransform {
     this.translationY = 0,
   }) : assert(scale > 0);
 
-  InkPoint sceneFromViewport(InkPoint point) => InkPoint(
+  CanvasPoint sceneFromViewport(CanvasPoint point) => CanvasPoint(
         (point.x - translationX) / scale,
         (point.y - translationY) / scale,
       );
 
-  InkPoint sceneDeltaFromViewport(InkPoint delta) =>
-      InkPoint(delta.x / scale, delta.y / scale);
+  CanvasPoint sceneDeltaFromViewport(CanvasPoint delta) =>
+      CanvasPoint(delta.x / scale, delta.y / scale);
 }
 
 class StrokeBounds {
@@ -72,7 +72,7 @@ class StrokeHistory {
 
 int? hitTestStrokeAtViewport(
   List<Stroke> strokes,
-  InkPoint viewportPoint,
+  CanvasPoint viewportPoint,
   CanvasTransform transform, {
   double screenTolerance = 14,
 }) {
@@ -90,7 +90,7 @@ int? hitTestStrokeAtViewport(
 bool translateSelectedFromViewportDelta(
   List<Stroke> strokes,
   Set<int> selectedIndices,
-  InkPoint viewportDelta,
+  CanvasPoint viewportDelta,
   CanvasTransform transform,
 ) {
   if (selectedIndices.isEmpty ||
@@ -105,7 +105,8 @@ bool translateSelectedFromViewportDelta(
     strokes[index] = Stroke(
       points: stroke.points
           .map(
-            (point) => InkPoint(point.x + sceneDelta.x, point.y + sceneDelta.y),
+            (point) =>
+                CanvasPoint(point.x + sceneDelta.x, point.y + sceneDelta.y),
           )
           .toList(),
       color: stroke.color,
@@ -141,7 +142,7 @@ StrokeBounds? strokeBoundsForSelection(
   return StrokeBounds(left: left, top: top, right: right, bottom: bottom);
 }
 
-double _distanceToStroke(InkPoint point, Stroke stroke) {
+double _distanceToStroke(CanvasPoint point, Stroke stroke) {
   if (stroke.points.isEmpty) return double.infinity;
   if (stroke.points.length == 1) {
     return _distance(point, stroke.points.single);
@@ -156,11 +157,15 @@ double _distanceToStroke(InkPoint point, Stroke stroke) {
   return closest;
 }
 
-double _distance(InkPoint first, InkPoint second) => math.sqrt(
+double _distance(CanvasPoint first, CanvasPoint second) => math.sqrt(
       math.pow(first.x - second.x, 2) + math.pow(first.y - second.y, 2),
     );
 
-double _distanceToSegment(InkPoint point, InkPoint start, InkPoint end) {
+double _distanceToSegment(
+  CanvasPoint point,
+  CanvasPoint start,
+  CanvasPoint end,
+) {
   final dx = end.x - start.x;
   final dy = end.y - start.y;
   final lengthSquared = dx * dx + dy * dy;
@@ -170,15 +175,16 @@ double _distanceToSegment(InkPoint point, InkPoint start, InkPoint end) {
   final clamped = projection.clamp(0.0, 1.0);
   return _distance(
     point,
-    InkPoint(start.x + clamped * dx, start.y + clamped * dy),
+    CanvasPoint(start.x + clamped * dx, start.y + clamped * dy),
   );
 }
 
 List<Stroke> _cloneStrokes(List<Stroke> strokes) => strokes
     .map(
       (stroke) => Stroke(
-        points:
-            stroke.points.map((point) => InkPoint(point.x, point.y)).toList(),
+        points: stroke.points
+            .map((point) => CanvasPoint(point.x, point.y))
+            .toList(),
         color: stroke.color,
         width: stroke.width,
         highlight: stroke.highlight,

@@ -1,7 +1,7 @@
 // ignore_for_file: avoid_print
 
-import 'package:pennino/canvas_editing.dart';
-import 'package:pennino/note_data.dart';
+import 'package:notes_app/canvas_editing.dart';
+import 'package:notes_app/note_data.dart';
 
 void expectClose(double actual, double expected, String message) {
   if ((actual - expected).abs() > 0.0001) {
@@ -16,7 +16,7 @@ void expectEqual(Object? actual, Object? expected, String message) {
 }
 
 Stroke stroke(double startX, double startY, double endX, double endY) => Stroke(
-      points: [InkPoint(startX, startY), InkPoint(endX, endY)],
+      points: [CanvasPoint(startX, startY), CanvasPoint(endX, endY)],
       color: 0xff000000,
       width: 4,
       highlight: false,
@@ -28,7 +28,7 @@ void main() {
     translationX: 40,
     translationY: 20,
   );
-  final halfScene = halfScale.sceneFromViewport(const InkPoint(90, 60));
+  final halfScene = halfScale.sceneFromViewport(const CanvasPoint(90, 60));
   expectClose(halfScene.x, 100, 'half-scale viewport maps to scene x');
   expectClose(halfScene.y, 80, 'half-scale viewport maps to scene y');
 
@@ -37,16 +37,17 @@ void main() {
     translationX: -30,
     translationY: 10,
   );
-  final doubleScene = doubleScale.sceneFromViewport(const InkPoint(170, 170));
+  final doubleScene =
+      doubleScale.sceneFromViewport(const CanvasPoint(170, 170));
   expectClose(doubleScene.x, 100, 'double-scale viewport maps to scene x');
   expectClose(doubleScene.y, 80, 'double-scale viewport maps to scene y');
   print('PASS viewport coordinates map to the same scene at different zooms');
 
   final strokes = [stroke(100, 100, 200, 100)];
   for (final testCase in [
-    (0.5, const InkPoint(90, 75)),
-    (1.0, const InkPoint(150, 110)),
-    (4.0, const InkPoint(630, 420)),
+    (0.5, const CanvasPoint(90, 75)),
+    (1.0, const CanvasPoint(150, 110)),
+    (4.0, const CanvasPoint(630, 420)),
   ]) {
     final selected = hitTestStrokeAtViewport(
       strokes,
@@ -66,7 +67,7 @@ void main() {
   translateSelectedFromViewportDelta(
     zoomedOutStroke,
     {0},
-    const InkPoint(40, 20),
+    const CanvasPoint(40, 20),
     const CanvasTransform(scale: 0.5),
   );
   expectClose(
@@ -84,7 +85,7 @@ void main() {
   translateSelectedFromViewportDelta(
     zoomedInStroke,
     {0},
-    const InkPoint(40, 20),
+    const CanvasPoint(40, 20),
     const CanvasTransform(scale: 2),
   );
   expectClose(
@@ -109,7 +110,7 @@ void main() {
     translateSelectedFromViewportDelta(
       invalidSelection,
       {4},
-      const InkPoint(20, 20),
+      const CanvasPoint(20, 20),
       const CanvasTransform(scale: 1),
     ),
     false,
@@ -138,7 +139,7 @@ void main() {
   translateSelectedFromViewportDelta(
     edited,
     {0},
-    const InkPoint(50, 0),
+    const CanvasPoint(50, 0),
     const CanvasTransform(scale: 1),
   );
   final beforeMove = history.undo(edited);

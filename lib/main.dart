@@ -15,8 +15,7 @@ import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
 
-const penninoVersion =
-    String.fromEnvironment('PENNINO_VERSION', defaultValue: '0.4.1');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.3');
 
 class UpdateInfo {
   final String version;
@@ -26,8 +25,23 @@ class UpdateInfo {
 }
 
 class UpdateService {
-  static const _channel = MethodChannel('pennino/update');
+  static const _channel = MethodChannel('notes/update');
   static bool _checked = false;
+
+  static Map<String, dynamic>? selectAsset(
+    List<Map<String, dynamic>> assets, {
+    required bool windows,
+  }) {
+    final expectedName =
+        windows ? 'Pennino-Windows-Setup.exe' : 'Pennino-Android.apk';
+    for (final asset in assets) {
+      if ((asset['name'] as String? ?? '').toLowerCase() ==
+          expectedName.toLowerCase()) {
+        return asset;
+      }
+    }
+    return null;
+  }
 
   static List<int> _parts(String value) => value
       .replaceFirst(RegExp(r'^[vV]'), '')
@@ -54,21 +68,18 @@ class UpdateService {
           'https://api.github.com/repos/hyydra/pennino/releases/latest'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
-        ..set(HttpHeaders.userAgentHeader, 'Pennino/$penninoVersion');
+        ..set(HttpHeaders.userAgentHeader, 'Pennino/$appVersion');
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) return null;
       final release = jsonDecode(await response.transform(utf8.decoder).join())
           as Map<String, dynamic>;
       final version =
           (release['tag_name'] as String? ?? '').replaceFirst('v', '');
-      if (!_isNewer(version, penninoVersion)) return null;
-      final suffix = Platform.isAndroid ? '.apk' : '.zip';
+      if (!_isNewer(version, appVersion)) return null;
       final assets =
           (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
-      final asset = assets.where((item) =>
-          (item['name'] as String? ?? '').toLowerCase().endsWith(suffix));
-      if (asset.isEmpty) return null;
-      final selected = asset.first;
+      final selected = selectAsset(assets, windows: Platform.isWindows);
+      if (selected == null) return null;
       return UpdateInfo(version, selected['browser_download_url'] as String,
           selected['name'] as String);
     } finally {
@@ -80,9 +91,20 @@ class UpdateService {
       {bool automatic = false}) async {
     if (automatic && _checked) return;
     _checked = true;
-    final update = await check();
+    UpdateInfo? update;
+    try {
+      update = await check();
+    } catch (error) {
+      if (!automatic && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update check failed: $error')),
+        );
+      }
+      return;
+    }
     if (!context.mounted) return;
-    if (update == null) {
+    final availableUpdate = update;
+    if (availableUpdate == null) {
       if (!automatic) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Pennino is up to date.')));
@@ -94,7 +116,7 @@ class UpdateService {
         builder: (context) => AlertDialog(
               title: const Text('Pennino update available'),
               content: Text(
-                  'Version ${update.version} is available. Download and install it now?'),
+                  'Version ${availableUpdate.version} is available. Download and install it now?'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -109,39 +131,20 @@ class UpdateService {
         .showSnackBar(const SnackBar(content: Text('Downloading update…')));
     final client = HttpClient();
     try {
-      final request = await client.getUrl(Uri.parse(update.downloadUrl));
+      final request =
+          await client.getUrl(Uri.parse(availableUpdate.downloadUrl));
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('Download failed (${response.statusCode})');
       }
       final file = File(
-          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}${update.fileName}');
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}${availableUpdate.fileName}');
       final sink = file.openWrite();
       await response.pipe(sink);
       if (Platform.isAndroid) {
         await _channel.invokeMethod('install', {'path': file.path});
       } else {
-        final app = Platform.resolvedExecutable;
-        final installDir = File(app).parent.path;
-        String quoted(String value) => value.replaceAll("'", "''");
-        final script = File('${file.path}.ps1');
-        await script.writeAsString('''
-param([int]\$PenninoPid)
-Wait-Process -Id \$PenninoPid -ErrorAction SilentlyContinue
-Expand-Archive -LiteralPath '${quoted(file.path)}' -DestinationPath '${quoted(installDir)}' -Force
-Start-Process -FilePath '${quoted(app)}'
-Remove-Item -LiteralPath \$PSCommandPath -Force
-''');
-        await Process.start(
-            'powershell',
-            [
-              '-NoProfile',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              script.path,
-              pid.toString()
-            ],
+        await Process.start(file.path, const [],
             mode: ProcessStartMode.detached);
         exit(0);
       }
@@ -158,11 +161,11 @@ Remove-Item -LiteralPath \$PSCommandPath -Force
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const PenninoApp());
+  runApp(const NotesApp());
 }
 
-class PenninoApp extends StatelessWidget {
-  const PenninoApp({super.key});
+class NotesApp extends StatelessWidget {
+  const NotesApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -177,7 +180,7 @@ class PenninoApp extends StatelessWidget {
 }
 
 Future<Directory> _noteDirectory() async =>
-    Directory('${(await getApplicationDocumentsDirectory()).path}/pennino');
+    Directory('${(await getApplicationDocumentsDirectory()).path}/notes');
 
 class LauncherCanvasPage extends StatefulWidget {
   const LauncherCanvasPage({super.key});
@@ -334,15 +337,17 @@ class EditorPage extends StatefulWidget {
 }
 
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
-  static const widgetChannel = MethodChannel('pennino/widget');
-  static const syncChannel = MethodChannel('pennino/sync');
+  static const widgetChannel = MethodChannel('notes/widget');
+  static const syncChannel = MethodChannel('notes/sync');
   late final TextEditingController titleController;
   final List<TextEditingController> textControllers = [];
+  final List<TextBlockFormat> textFormats = [];
+  int activeTextIndex = 0;
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
   DrawTool tool = DrawTool.pen;
-  Color ink = Colors.blue.shade800;
+  Color strokeColor = Colors.blue.shade800;
   double width = 3;
   Stroke? active;
   bool showText = true;
@@ -369,7 +374,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
     taskController = TextEditingController();
-    _replaceTextControllers(widget.note.textBlocks);
+    _replaceTextControllers(
+      widget.note.textBlocks,
+      formats: widget.note.textBlockFormats,
+    );
   }
 
   @override
@@ -408,19 +416,39 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return controller;
   }
 
-  void _replaceTextControllers(Iterable<String> blocks) {
+  void _replaceTextControllers(
+    Iterable<String> blocks, {
+    Iterable<TextBlockFormat>? formats,
+  }) {
     for (final controller in textControllers) {
       controller.dispose();
     }
     textControllers
       ..clear()
       ..addAll(blocks.map(_textController));
+    final savedFormats = formats?.toList() ?? const <TextBlockFormat>[];
+    textFormats
+      ..clear()
+      ..addAll(List.generate(
+        textControllers.length,
+        (index) => index < savedFormats.length
+            ? TextBlockFormat(
+                bold: savedFormats[index].bold,
+                color: savedFormats[index].color,
+              )
+            : TextBlockFormat(),
+      ));
+    activeTextIndex = textControllers.isEmpty
+        ? 0
+        : activeTextIndex.clamp(0, textControllers.length - 1);
   }
 
   void addTextBlock() {
     setState(() {
       showText = true;
       textControllers.add(_textController(''));
+      textFormats.add(TextBlockFormat());
+      activeTextIndex = textControllers.length - 1;
     });
     _markChanged();
   }
@@ -428,7 +456,106 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void removeTextBlock(int index) {
     setState(() {
       textControllers.removeAt(index).dispose();
+      textFormats.removeAt(index);
+      activeTextIndex = textControllers.isEmpty
+          ? 0
+          : activeTextIndex.clamp(0, textControllers.length - 1);
     });
+    _markChanged();
+  }
+
+  TextEditingController? get _activeTextController => textControllers.isEmpty
+      ? null
+      : textControllers[activeTextIndex.clamp(0, textControllers.length - 1)];
+
+  void _toggleLinePrefix(String prefix) {
+    final controller = _activeTextController;
+    if (controller == null) {
+      addTextBlock();
+      return;
+    }
+    final value = controller.value;
+    final cursor =
+        value.selection.isValid ? value.selection.start : value.text.length;
+    final lineStart = value.text.lastIndexOf('\n', math.max(0, cursor - 1)) + 1;
+    final lineEndMatch = value.text.indexOf('\n', cursor);
+    final lineEnd = lineEndMatch == -1 ? value.text.length : lineEndMatch;
+    final line = value.text.substring(lineStart, lineEnd);
+    const knownPrefixes = ['☐ ', '• ', '1. '];
+    final currentPrefix = knownPrefixes.where(line.startsWith).firstOrNull;
+    final removeLength = currentPrefix?.length ?? 0;
+    final replacement = currentPrefix == prefix ? '' : prefix;
+    final text = value.text.replaceRange(
+      lineStart,
+      lineStart + removeLength,
+      replacement,
+    );
+    final nextCursor = (cursor - removeLength + replacement.length)
+        .clamp(lineStart, text.length);
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: nextCursor),
+    );
+  }
+
+  void _changeIndent(bool increase) {
+    final controller = _activeTextController;
+    if (controller == null) return;
+    final value = controller.value;
+    final cursor =
+        value.selection.isValid ? value.selection.start : value.text.length;
+    final lineStart = value.text.lastIndexOf('\n', math.max(0, cursor - 1)) + 1;
+    final remove =
+        !increase && value.text.substring(lineStart).startsWith('    ');
+    final text = value.text.replaceRange(
+      lineStart,
+      lineStart + (remove ? 4 : 0),
+      increase ? '    ' : '',
+    );
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(
+        offset: (cursor +
+                (increase
+                    ? 4
+                    : remove
+                        ? -4
+                        : 0))
+            .clamp(lineStart, text.length),
+      ),
+    );
+  }
+
+  Future<void> _chooseTextColor() async {
+    if (textControllers.isEmpty) return;
+    final colors = [
+      Colors.black,
+      Colors.red,
+      Colors.orange,
+      Colors.green,
+      Colors.blue,
+      Colors.purple,
+    ];
+    final selected = await showDialog<Color>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Text colour'),
+        content: Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final color in colors)
+              InkWell(
+                onTap: () => Navigator.pop(dialogContext, color),
+                borderRadius: BorderRadius.circular(24),
+                child: CircleAvatar(backgroundColor: color),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => textFormats[activeTextIndex].color = selected.toARGB32());
     _markChanged();
   }
 
@@ -441,8 +568,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  InkPoint _scenePoint(Offset viewportPoint) => canvasTransform
-      .sceneFromViewport(InkPoint(viewportPoint.dx, viewportPoint.dy));
+  CanvasPoint _scenePoint(Offset viewportPoint) => canvasTransform
+      .sceneFromViewport(CanvasPoint(viewportPoint.dx, viewportPoint.dy));
 
   void begin(Offset viewportPoint) {
     if (tool == DrawTool.hand) return;
@@ -450,7 +577,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (tool == DrawTool.select) {
       final selected = hitTestStrokeAtViewport(
         widget.note.strokes,
-        InkPoint(viewportPoint.dx, viewportPoint.dy),
+        CanvasPoint(viewportPoint.dx, viewportPoint.dy),
         canvasTransform,
       );
       setState(() {
@@ -473,7 +600,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       selectedStrokes.clear();
       active = Stroke(
         points: [scenePoint],
-        color: ink.toARGB32(),
+        color: strokeColor.toARGB32(),
         width: tool == DrawTool.highlighter
             ? 22
             : tool == DrawTool.pencil
@@ -497,7 +624,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       final moved = translateSelectedFromViewportDelta(
         widget.note.strokes,
         selectedStrokes,
-        InkPoint(
+        CanvasPoint(
           viewportPoint.dx - previous.dx,
           viewportPoint.dy - previous.dy,
         ),
@@ -545,7 +672,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void erase(Offset viewportPoint) {
     final index = hitTestStrokeAtViewport(
       widget.note.strokes,
-      InkPoint(viewportPoint.dx, viewportPoint.dy),
+      CanvasPoint(viewportPoint.dx, viewportPoint.dy),
       canvasTransform,
     );
     if (index == null) return;
@@ -581,6 +708,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         : titleController.text.trim();
     widget.note.textBlocks =
         textControllers.map((controller) => controller.text).toList();
+    widget.note.textBlockFormats = textFormats
+        .map(
+            (format) => TextBlockFormat(bold: format.bold, color: format.color))
+        .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
   }
@@ -613,7 +744,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(700, 420);
-    InkPainter(
+    StrokePainter(
       widget.note.strokes,
       null,
       background: Color(widget.note.backgroundColor),
@@ -662,7 +793,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Widget updated. Add Pennino widget from the Android home screen.',
+              'Widget updated. Add the Pennino widget from the Android home screen.',
             ),
           ),
         );
@@ -876,6 +1007,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           setState(() {
             widget.note.title = syncedCurrent.title;
             widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
+            widget.note.textBlockFormats = syncedCurrent.textBlockFormats
+                .map((format) => TextBlockFormat(
+                      bold: format.bold,
+                      color: format.color,
+                    ))
+                .toList();
             widget.note.updated = syncedCurrent.updated;
             widget.note.strokes = syncedCurrent.strokes;
             widget.note.tasks = syncedCurrent.tasks;
@@ -887,7 +1024,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             gestureHistoryRecorded = false;
             strokeHistory.clear();
             titleController.text = syncedCurrent.title;
-            _replaceTextControllers(syncedCurrent.textBlocks);
+            _replaceTextControllers(
+              syncedCurrent.textBlocks,
+              formats: syncedCurrent.textBlockFormats,
+            );
           });
         } finally {
           applyingExternalChange = false;
@@ -967,17 +1107,106 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: InkWell(
-                    onTap: () => setState(() => ink = color),
+                    onTap: () => setState(() => strokeColor = color),
                     child: CircleAvatar(
                       radius: 15,
                       backgroundColor: color,
-                      child: ink == color
+                      child: strokeColor == color
                           ? const Icon(Icons.check,
                               size: 17, color: Colors.white)
                           : null,
                     ),
                   ),
                 ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _textToolbar() => SizedBox(
+        key: const Key('text-toolbar'),
+        height: 52,
+        child: Material(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ChoiceChip(
+                  avatar: const Icon(Icons.text_fields, size: 18),
+                  label: const Text('Text blocks'),
+                  selected: showText,
+                  onSelected: (selected) => setState(() => showText = selected),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ActionChip(
+                  avatar: const Icon(Icons.add, size: 18),
+                  label: const Text('Add text block'),
+                  tooltip: 'Add text block',
+                  onPressed: addTextBlock,
+                ),
+              ),
+              if (textControllers.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Center(
+                    child: Text(
+                      '${textControllers.length} text ${textControllers.length == 1 ? 'block' : 'blocks'}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+              if (textControllers.isNotEmpty) ...[
+                IconButton(
+                  tooltip: 'Checklist',
+                  onPressed: () => _toggleLinePrefix('☐ '),
+                  icon: const Icon(Icons.check_box_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Numbered list',
+                  onPressed: () => _toggleLinePrefix('1. '),
+                  icon: const Icon(Icons.format_list_numbered),
+                ),
+                IconButton(
+                  tooltip: 'Bulleted list',
+                  onPressed: () => _toggleLinePrefix('• '),
+                  icon: const Icon(Icons.format_list_bulleted),
+                ),
+                IconButton(
+                  tooltip: 'Decrease indent',
+                  onPressed: () => _changeIndent(false),
+                  icon: const Icon(Icons.format_indent_decrease),
+                ),
+                IconButton(
+                  tooltip: 'Increase indent',
+                  onPressed: () => _changeIndent(true),
+                  icon: const Icon(Icons.format_indent_increase),
+                ),
+                IconButton(
+                  tooltip: 'Text colour',
+                  onPressed: _chooseTextColor,
+                  icon: Icon(
+                    Icons.format_color_text,
+                    color: Color(textFormats[activeTextIndex].color),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Bold',
+                  isSelected: textFormats[activeTextIndex].bold,
+                  onPressed: () {
+                    setState(() {
+                      textFormats[activeTextIndex].bold =
+                          !textFormats[activeTextIndex].bold;
+                    });
+                    _markChanged();
+                  },
+                  icon: const Icon(Icons.format_bold),
+                ),
+              ],
             ],
           ),
         ),
@@ -1209,6 +1438,19 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             }),
                           ),
                         ),
+                      if (Theme.of(context).platform == TargetPlatform.windows)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: ActionChip(
+                            avatar: const Icon(
+                              Icons.system_update_outlined,
+                              size: 18,
+                            ),
+                            label: Text('Auto updates · v$appVersion'),
+                            tooltip: 'Check for updates',
+                            onPressed: () => UpdateService.prompt(context),
+                          ),
+                        ),
                       if (selectedStrokes.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.all(4),
@@ -1229,11 +1471,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: InkWell(
-                            onTap: () => setState(() => ink = c),
+                            onTap: () => setState(() => strokeColor = c),
                             child: CircleAvatar(
                               radius: 15,
                               backgroundColor: c,
-                              child: ink == c
+                              child: strokeColor == c
                                   ? const Icon(
                                       Icons.check,
                                       size: 17,
@@ -1246,6 +1488,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+              _textToolbar(),
               if (showText)
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 230),
@@ -1256,9 +1499,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         padding: const EdgeInsets.fromLTRB(12, 0, 4, 2),
                         child: Row(
                           children: [
-                            const Expanded(child: Text('Text blocks')),
+                            const Expanded(child: Text('Typed text')),
                             IconButton(
-                              tooltip: 'Add text block',
+                              tooltip: 'Add another text block',
                               onPressed: addTextBlock,
                               icon: const Icon(Icons.add),
                             ),
@@ -1287,9 +1530,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   Expanded(
                                     child: TextField(
                                       controller: textControllers[index],
+                                      onTap: () => setState(
+                                        () => activeTextIndex = index,
+                                      ),
                                       minLines: 2,
                                       maxLines: null,
                                       keyboardType: TextInputType.multiline,
+                                      style: TextStyle(
+                                        color: Color(textFormats[index].color),
+                                        fontWeight: textFormats[index].bold
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
                                       decoration: InputDecoration(
                                         hintText: 'Text block ${index + 1}',
                                         border: const OutlineInputBorder(),
@@ -1403,7 +1655,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                               width: canvasWidth,
                               height: canvasHeight,
                               child: CustomPaint(
-                                painter: InkPainter(
+                                painter: StrokePainter(
                                   widget.note.strokes,
                                   active,
                                   selectedIndices: selectedStrokes,
@@ -1434,14 +1686,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       );
 }
 
-class InkPainter extends CustomPainter {
+class StrokePainter extends CustomPainter {
   final List<Stroke> strokes;
   final Stroke? active;
   final Color background;
   final PaperPattern pattern;
   final Set<int> selectedIndices;
   final double selectionScale;
-  InkPainter(
+  StrokePainter(
     this.strokes,
     this.active, {
     this.background = const Color(0xfffffdf7),
@@ -1519,5 +1771,5 @@ class InkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant InkPainter old) => true;
+  bool shouldRepaint(covariant StrokePainter old) => true;
 }
