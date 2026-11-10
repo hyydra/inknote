@@ -51,7 +51,7 @@ class UpdateService {
     final client = HttpClient();
     try {
       final request = await client.getUrl(Uri.parse(
-          'https://api.github.com/repos/hyydra/inknote/releases/latest'));
+          'https://api.github.com/repos/hyydra/pennino/releases/latest'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
         ..set(HttpHeaders.userAgentHeader, 'InkNote/$inkNoteVersion');
