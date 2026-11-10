@@ -3,10 +3,16 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+
+import 'autosave_controller.dart';
+import 'canvas_editing.dart';
+import 'note_data.dart';
+import 'note_store.dart';
 
 const inkNoteVersion =
     String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.3.0');
@@ -161,138 +167,16 @@ class InkNoteApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: 'InkNote',
         theme: ThemeData(
-            useMaterial3: true,
-            colorSchemeSeed: const Color(0xff594fc8),
-            scaffoldBackgroundColor: const Color(0xfffaf9f6)),
+          useMaterial3: true,
+          colorSchemeSeed: const Color(0xff594fc8),
+          scaffoldBackgroundColor: const Color(0xfffaf9f6),
+        ),
         home: const LauncherCanvasPage(),
       );
 }
 
-class InkPoint {
-  final double x, y;
-  const InkPoint(this.x, this.y);
-  factory InkPoint.fromJson(Map<String, dynamic> m) =>
-      InkPoint((m['x'] as num).toDouble(), (m['y'] as num).toDouble());
-  Map<String, dynamic> toJson() => {'x': x, 'y': y};
-}
-
-class Stroke {
-  final List<InkPoint> points;
-  final int color;
-  final double width;
-  final bool highlight;
-  final double opacity;
-  Stroke(
-      {required this.points,
-      required this.color,
-      required this.width,
-      required this.highlight,
-      this.opacity = 1});
-  factory Stroke.fromJson(Map<String, dynamic> m) => Stroke(
-      points: (m['points'] as List)
-          .map((e) => InkPoint.fromJson(Map<String, dynamic>.from(e)))
-          .toList(),
-      color: m['color'] as int,
-      width: (m['width'] as num).toDouble(),
-      highlight: m['highlight'] as bool? ?? false,
-      opacity: (m['opacity'] as num?)?.toDouble() ?? 1);
-  Map<String, dynamic> toJson() => {
-        'points': points.map((e) => e.toJson()).toList(),
-        'color': color,
-        'width': width,
-        'highlight': highlight,
-        'opacity': opacity
-      };
-}
-
-class TaskItem {
-  String text;
-  bool done;
-  TaskItem({required this.text, this.done = false});
-  factory TaskItem.fromJson(Map<String, dynamic> value) => TaskItem(
-      text: value['text'] as String, done: value['done'] as bool? ?? false);
-  Map<String, dynamic> toJson() => {'text': text, 'done': done};
-}
-
-class Note {
-  String id, title, text;
-  int backgroundColor;
-  String backgroundPattern;
-  DateTime updated;
-  List<Stroke> strokes;
-  List<TaskItem> tasks;
-  Note(
-      {required this.id,
-      required this.title,
-      this.text = '',
-      this.backgroundColor = 0xfffffdf7,
-      this.backgroundPattern = 'lined',
-      required this.updated,
-      required this.strokes,
-      List<TaskItem>? tasks})
-      : tasks = tasks ?? [];
-  factory Note.fromJson(Map<String, dynamic> m) => Note(
-      id: m['id'] as String,
-      title: m['title'] as String,
-      text: m['text'] as String? ?? '',
-      backgroundColor: m['backgroundColor'] as int? ?? 0xfffffdf7,
-      backgroundPattern: m['backgroundPattern'] as String? ?? 'lined',
-      updated: DateTime.parse(m['updated'] as String),
-      strokes: (m['strokes'] as List)
-          .map((e) => Stroke.fromJson(Map<String, dynamic>.from(e)))
-          .toList(),
-      tasks: (m['tasks'] as List? ?? const [])
-          .map((e) => TaskItem.fromJson(Map<String, dynamic>.from(e)))
-          .toList());
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'text': text,
-        'backgroundColor': backgroundColor,
-        'backgroundPattern': backgroundPattern,
-        'updated': updated.toIso8601String(),
-        'strokes': strokes.map((s) => s.toJson()).toList(),
-        'tasks': tasks.map((task) => task.toJson()).toList()
-      };
-}
-
-class NoteStore {
-  Future<Directory> get folder async {
-    final dir =
-        Directory('${(await getApplicationDocumentsDirectory()).path}/inknote');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
-  }
-
-  Future<List<Note>> load() async {
-    final dir = await folder;
-    final notes = <Note>[];
-    await for (final entry in dir.list()) {
-      if (entry is File && entry.path.endsWith('.json')) {
-        try {
-          notes.add(Note.fromJson(jsonDecode(await entry.readAsString())));
-        } catch (_) {/* Skip damaged note without deleting it. */}
-      }
-    }
-    notes.sort((a, b) => b.updated.compareTo(a.updated));
-    return notes;
-  }
-
-  Future<void> save(Note n) async {
-    final dir = await folder;
-    final file = File('${dir.path}/${n.id}.json');
-    final tmp = File('${file.path}.tmp');
-    await tmp.writeAsString(jsonEncode(n.toJson()), flush: true);
-    if (await file.exists()) await file.delete();
-    await tmp.rename(file.path);
-  }
-
-  Future<void> delete(Note n) async {
-    final dir = await folder;
-    final f = File('${dir.path}/${n.id}.json');
-    if (await f.exists()) await f.delete();
-  }
-}
+Future<Directory> _noteDirectory() async =>
+    Directory('${(await getApplicationDocumentsDirectory()).path}/inknote');
 
 class LauncherCanvasPage extends StatefulWidget {
   const LauncherCanvasPage({super.key});
@@ -303,7 +187,7 @@ class LauncherCanvasPage extends StatefulWidget {
 
 class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   static const launcherNoteId = 'launcher-canvas';
-  final store = NoteStore();
+  final store = NoteStore(directoryProvider: _noteDirectory);
   Note? note;
 
   @override
@@ -324,11 +208,7 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
             strokes: [],
           )
         : existing.first;
-    if (mounted) {
-      setState(() => note = loaded);
-      WidgetsBinding.instance.addPostFrameCallback(
-          (_) => UpdateService.prompt(context, automatic: true));
-    }
+    if (mounted) setState(() => note = loaded);
   }
 
   @override
@@ -348,7 +228,7 @@ class LibraryPage extends StatefulWidget {
 }
 
 class _LibraryPageState extends State<LibraryPage> {
-  final store = NoteStore();
+  final store = NoteStore(directoryProvider: _noteDirectory);
   List<Note> notes = [];
   bool loading = true;
   @override
@@ -369,13 +249,16 @@ class _LibraryPageState extends State<LibraryPage> {
   Future<void> openNote([Note? note]) async {
     final n = note ??
         Note(
-            id: const Uuid().v4(),
-            title: 'Untitled note',
-            text: '',
-            updated: DateTime.now(),
-            strokes: []);
+          id: const Uuid().v4(),
+          title: 'Untitled note',
+          text: '',
+          updated: DateTime.now(),
+          strokes: [],
+        );
     await Navigator.push(
-        context, MaterialPageRoute(builder: (_) => EditorPage(note: n)));
+      context,
+      MaterialPageRoute(builder: (_) => EditorPage(note: n)),
+    );
     await refresh();
   }
 
@@ -383,47 +266,58 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('All notes')),
         floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => openNote(),
-            icon: const Icon(Icons.add),
-            label: const Text('New note')),
+          onPressed: () => openNote(),
+          icon: const Icon(Icons.add),
+          label: const Text('New note'),
+        ),
         body: loading
             ? const Center(child: CircularProgressIndicator())
             : notes.isEmpty
                 ? Center(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.draw_outlined, size: 64, color: Colors.grey),
-                    SizedBox(height: 12),
-                    Text('Start your first handwritten note')
-                  ]))
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.draw_outlined, size: 64, color: Colors.grey),
+                        SizedBox(height: 12),
+                        Text('Start your first handwritten note'),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
                     padding: const EdgeInsets.all(12),
                     itemCount: notes.length,
                     itemBuilder: (context, i) {
                       final n = notes[i];
                       return Card(
-                          child: ListTile(
-                              leading: const Icon(Icons.note_alt_outlined),
-                              title: Text(n.title),
-                              subtitle: Text(
-                                  '${n.strokes.length} strokes • ${n.updated.toLocal()}'),
-                              onTap: () => openNote(n),
-                              trailing: PopupMenuButton<String>(
-                                  onSelected: (v) async {
-                                    if (v == 'delete') {
-                                      await store.delete(n);
-                                      refresh();
-                                    }
-                                  },
-                                  itemBuilder: (_) => [
-                                        const PopupMenuItem(
-                                            value: 'delete',
-                                            child: Text('Delete'))
-                                      ])));
-                    }),
+                        child: ListTile(
+                          leading: const Icon(Icons.note_alt_outlined),
+                          title: Text(n.title),
+                          subtitle: Text(
+                            '${n.strokes.length} strokes • ${n.updated.toLocal()}',
+                          ),
+                          onTap: () => openNote(n),
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (v) async {
+                              if (v == 'delete') {
+                                await store.delete(n);
+                                refresh();
+                              }
+                            },
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
       );
 }
 
-enum DrawTool { pencil, pen, highlighter, eraser }
+enum DrawTool { hand, select, pencil, pen, highlighter, eraser }
 
 enum PaperPattern { plain, lined, grid, dots }
 
@@ -435,128 +329,268 @@ class EditorPage extends StatefulWidget {
   State<EditorPage> createState() => _EditorPageState();
 }
 
-class _EditorPageState extends State<EditorPage> {
+class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('inknote/widget');
   static const syncChannel = MethodChannel('inknote/sync');
   late final TextEditingController titleController;
   late final TextEditingController textController;
   late final TextEditingController taskController;
+  final TransformationController transformationController =
+      TransformationController();
   DrawTool tool = DrawTool.pen;
   Color ink = Colors.blue.shade800;
   double width = 3;
   Stroke? active;
-  bool changed = false;
   bool showText = true;
   bool showTasks = false;
-  Timer? textSaveTimer;
-  final List<Stroke> undone = [];
-  final store = NoteStore();
+  bool applyingExternalChange = false;
+  final Set<int> selectedStrokes = {};
+  Offset? lastSelectionViewportPoint;
+  bool selectionMoved = false;
+  bool gestureHistoryRecorded = false;
+  late final AutosaveController autosave;
+  final StrokeHistory strokeHistory = StrokeHistory();
+  final store = NoteStore(directoryProvider: _noteDirectory);
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    autosave = AutosaveController(
+      onSave: _persist,
+      onStatusChanged: (_) {
+        if (mounted) setState(() {});
+      },
+    );
     titleController = TextEditingController(text: widget.note.title);
-    titleController.addListener(() => changed = true);
+    titleController.addListener(_markChanged);
     textController = TextEditingController(text: widget.note.text);
     taskController = TextEditingController();
-    textController.addListener(() {
-      changed = true;
-      if (widget.launcherMode) {
-        textSaveTimer?.cancel();
-        textSaveTimer = Timer(
-            const Duration(milliseconds: 700), () => save(showMessage: false));
-      }
-    });
+    textController.addListener(_markChanged);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    autosave.dispose();
     titleController.dispose();
-    textSaveTimer?.cancel();
     textController.dispose();
     taskController.dispose();
+    transformationController.dispose();
     super.dispose();
   }
 
-  void begin(Offset p) {
-    if (tool == DrawTool.eraser) {
-      erase(p);
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _finalizeActiveStroke();
+      lastSelectionViewportPoint = null;
+      selectionMoved = false;
+      gestureHistoryRecorded = false;
+      unawaited(autosave.saveNow());
+    }
+  }
+
+  void _markChanged() {
+    if (!applyingExternalChange) autosave.markChanged();
+  }
+
+  CanvasTransform get canvasTransform {
+    final matrix = transformationController.value;
+    return CanvasTransform(
+      scale: matrix.getMaxScaleOnAxis(),
+      translationX: matrix.storage[12],
+      translationY: matrix.storage[13],
+    );
+  }
+
+  InkPoint _scenePoint(Offset viewportPoint) => canvasTransform
+      .sceneFromViewport(InkPoint(viewportPoint.dx, viewportPoint.dy));
+
+  void begin(Offset viewportPoint) {
+    if (tool == DrawTool.hand) return;
+    gestureHistoryRecorded = false;
+    if (tool == DrawTool.select) {
+      final selected = hitTestStrokeAtViewport(
+        widget.note.strokes,
+        InkPoint(viewportPoint.dx, viewportPoint.dy),
+        canvasTransform,
+      );
+      setState(() {
+        selectedStrokes
+          ..clear()
+          ..addAll(selected == null ? const <int>[] : [selected]);
+        lastSelectionViewportPoint = selected == null ? null : viewportPoint;
+        selectionMoved = false;
+      });
       return;
     }
+    if (tool == DrawTool.eraser) {
+      erase(viewportPoint);
+      return;
+    }
+    final scenePoint = _scenePoint(viewportPoint);
+    strokeHistory.record(widget.note.strokes);
+    gestureHistoryRecorded = true;
     setState(() {
+      selectedStrokes.clear();
       active = Stroke(
-          points: [InkPoint(p.dx, p.dy)],
-          color: ink.toARGB32(),
-          width: tool == DrawTool.highlighter
-              ? 22
-              : tool == DrawTool.pencil
-                  ? 2
-                  : width,
-          highlight: tool == DrawTool.highlighter,
-          opacity: tool == DrawTool.pencil ? 0.58 : 1);
+        points: [scenePoint],
+        color: ink.toARGB32(),
+        width: tool == DrawTool.highlighter
+            ? 22
+            : tool == DrawTool.pencil
+                ? 2
+                : width,
+        highlight: tool == DrawTool.highlighter,
+        opacity: tool == DrawTool.pencil ? 0.58 : 1,
+      );
     });
   }
 
-  void move(Offset p) {
+  void move(Offset viewportPoint) {
+    if (tool == DrawTool.hand) return;
+    if (tool == DrawTool.select) {
+      final previous = lastSelectionViewportPoint;
+      if (previous == null || selectedStrokes.isEmpty) return;
+      if (!gestureHistoryRecorded) {
+        strokeHistory.record(widget.note.strokes);
+        gestureHistoryRecorded = true;
+      }
+      final moved = translateSelectedFromViewportDelta(
+        widget.note.strokes,
+        selectedStrokes,
+        InkPoint(
+          viewportPoint.dx - previous.dx,
+          viewportPoint.dy - previous.dy,
+        ),
+        canvasTransform,
+      );
+      if (moved) {
+        if (!selectionMoved) _markChanged();
+        setState(() {
+          lastSelectionViewportPoint = viewportPoint;
+          selectionMoved = true;
+        });
+      }
+      return;
+    }
     if (tool == DrawTool.eraser) {
-      erase(p);
+      erase(viewportPoint);
       return;
     }
     if (active == null) return;
-    setState(() => active!.points.add(InkPoint(p.dx, p.dy)));
+    final scenePoint = _scenePoint(viewportPoint);
+    setState(() => active!.points.add(scenePoint));
   }
 
   void end() {
-    if (active != null) {
+    if (tool == DrawTool.select) {
       setState(() {
-        widget.note.strokes.add(active!);
-        active = null;
-        undone.clear();
-        changed = true;
+        lastSelectionViewportPoint = null;
+        selectionMoved = false;
+        gestureHistoryRecorded = false;
       });
+      return;
     }
-    if (widget.launcherMode && changed) unawaited(save(showMessage: false));
+    _finalizeActiveStroke();
   }
 
-  void erase(Offset p) {
-    for (int i = widget.note.strokes.length - 1; i >= 0; i--) {
-      final s = widget.note.strokes[i];
-      if (s.points.any((q) =>
-          (Offset(q.x, q.y) - p).distance < math.max(14, s.width / 2 + 8))) {
-        setState(() {
-          widget.note.strokes.removeAt(i);
-          changed = true;
-          undone.clear();
-        });
-        break;
+  void _finalizeActiveStroke() {
+    if (!commitActiveStroke(widget.note.strokes, active)) return;
+    setState(() {
+      active = null;
+      gestureHistoryRecorded = false;
+    });
+    _markChanged();
+  }
+
+  void erase(Offset viewportPoint) {
+    final index = hitTestStrokeAtViewport(
+      widget.note.strokes,
+      InkPoint(viewportPoint.dx, viewportPoint.dy),
+      canvasTransform,
+    );
+    if (index == null) return;
+    if (!gestureHistoryRecorded) {
+      strokeHistory.record(widget.note.strokes);
+      gestureHistoryRecorded = true;
+    }
+    setState(() {
+      widget.note.strokes.removeAt(index);
+      selectedStrokes.clear();
+    });
+    _markChanged();
+  }
+
+  void deleteSelection() {
+    if (selectedStrokes.isEmpty) return;
+    final indices = selectedStrokes.toList()..sort((a, b) => b.compareTo(a));
+    strokeHistory.record(widget.note.strokes);
+    setState(() {
+      for (final index in indices) {
+        if (index >= 0 && index < widget.note.strokes.length) {
+          widget.note.strokes.removeAt(index);
+        }
       }
-    }
+      selectedStrokes.clear();
+    });
+    _markChanged();
   }
 
-  Future<void> save({bool showMessage = true}) async {
+  Future<void> _persist() async {
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
     widget.note.text = textController.text;
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
-    changed = false;
-    if (showMessage && mounted)
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Saved on this device')));
   }
+
+  Future<void> save({bool showMessage = true}) async {
+    await autosave.saveNow();
+    if (!showMessage || !mounted) return;
+    final message = autosave.status == SaveStatus.failed
+        ? 'Could not save this note. Your edits are still open.'
+        : 'Saved on this device';
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String get saveLabel => switch (autosave.status) {
+        SaveStatus.saved => 'Saved',
+        SaveStatus.unsaved => 'Unsaved',
+        SaveStatus.saving => 'Saving…',
+        SaveStatus.failed => 'Save failed',
+      };
+
+  IconData get saveIcon => switch (autosave.status) {
+        SaveStatus.saved => Icons.check_circle_outline,
+        SaveStatus.unsaved => Icons.edit_outlined,
+        SaveStatus.saving => Icons.sync,
+        SaveStatus.failed => Icons.error_outline,
+      };
 
   Future<Uint8List> renderPreview() async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(700, 420);
-    InkPainter(widget.note.strokes, null,
-        background: Color(widget.note.backgroundColor),
-        pattern: PaperPattern.values.firstWhere(
-            (item) => item.name == widget.note.backgroundPattern,
-            orElse: () => PaperPattern.lined)).paint(canvas, size);
+    InkPainter(
+      widget.note.strokes,
+      null,
+      background: Color(widget.note.backgroundColor),
+      pattern: PaperPattern.values.firstWhere(
+        (item) => item.name == widget.note.backgroundPattern,
+        orElse: () => PaperPattern.lined,
+      ),
+    ).paint(canvas, size);
     final picture = recorder.endRecording();
-    final image =
-        await picture.toImage(size.width.toInt(), size.height.toInt());
+    final image = await picture.toImage(
+      size.width.toInt(),
+      size.height.toInt(),
+    );
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     image.dispose();
     picture.dispose();
@@ -564,88 +598,123 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Future<void> pinWidget() async {
-    await save();
+    await save(showMessage: false);
+    if (autosave.status == SaveStatus.failed) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Widget update stopped because the note is unsaved'),
+          ),
+        );
+      }
+      return;
+    }
     if (!Platform.isAndroid) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Home screen widgets are Android-only')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Home screen widgets are Android-only')),
+        );
       return;
     }
     try {
       final png = await renderPreview();
-      await widgetChannel.invokeMethod(
-          'setNote', {'title': widget.note.title, 'png': base64Encode(png)});
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Widget updated. Add InkNote widget from the Android home screen.')));
-    } on PlatformException catch (e) {
+      await widgetChannel.invokeMethod('setNote', {
+        'title': widget.note.title,
+        'png': base64Encode(png),
+      });
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Widget error: ${e.message}')));
+          const SnackBar(
+            content: Text(
+              'Widget updated. Add InkNote widget from the Android home screen.',
+            ),
+          ),
+        );
+    } on PlatformException catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Widget error: ${e.message}')));
     }
   }
 
   Future<void> choosePaper() async {
     var selectedColor = Color(widget.note.backgroundColor);
     var selectedPattern = PaperPattern.values.firstWhere(
-        (item) => item.name == widget.note.backgroundPattern,
-        orElse: () => PaperPattern.lined);
+      (item) => item.name == widget.note.backgroundPattern,
+      orElse: () => PaperPattern.lined,
+    );
     final selection = await showModalBottomSheet<(Color, PaperPattern)>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-            builder: (context, setSheetState) => SafeArea(
-                child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text('Paper',
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 16),
-                      Wrap(spacing: 12, children: [
-                        for (final color in const [
-                          Color(0xfffffdf7),
-                          Color(0xfffff4cc),
-                          Color(0xffeef7ff),
-                          Color(0xffedf8ef),
-                          Color(0xffffeeee),
-                          Color(0xff202124),
-                        ])
-                          InkWell(
-                              onTap: () =>
-                                  setSheetState(() => selectedColor = color),
-                              child: CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: color,
-                                  child: selectedColor == color
-                                      ? Icon(Icons.check,
-                                          color: color.computeLuminance() > 0.5
-                                              ? Colors.black
-                                              : Colors.white)
-                                      : null))
-                      ]),
-                      const SizedBox(height: 16),
-                      Wrap(spacing: 8, children: [
-                        for (final pattern in PaperPattern.values)
-                          ChoiceChip(
-                              label: Text(pattern.name),
-                              selected: selectedPattern == pattern,
-                              onSelected: (_) => setSheetState(
-                                  () => selectedPattern = pattern))
-                      ]),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                          onPressed: () => Navigator.pop(
-                              context, (selectedColor, selectedPattern)),
-                          icon: const Icon(Icons.check),
-                          label: const Text('Apply'))
-                    ])))));
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Paper', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  children: [
+                    for (final color in const [
+                      Color(0xfffffdf7),
+                      Color(0xfffff4cc),
+                      Color(0xffeef7ff),
+                      Color(0xffedf8ef),
+                      Color(0xffffeeee),
+                      Color(0xff202124),
+                    ])
+                      InkWell(
+                        onTap: () => setSheetState(() => selectedColor = color),
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundColor: color,
+                          child: selectedColor == color
+                              ? Icon(
+                                  Icons.check,
+                                  color: color.computeLuminance() > 0.5
+                                      ? Colors.black
+                                      : Colors.white,
+                                )
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final pattern in PaperPattern.values)
+                      ChoiceChip(
+                        label: Text(pattern.name),
+                        selected: selectedPattern == pattern,
+                        onSelected: (_) =>
+                            setSheetState(() => selectedPattern = pattern),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () =>
+                      Navigator.pop(context, (selectedColor, selectedPattern)),
+                  icon: const Icon(Icons.check),
+                  label: const Text('Apply'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
     if (selection == null) return;
     setState(() {
       widget.note.backgroundColor = selection.$1.toARGB32();
       widget.note.backgroundPattern = selection.$2.name;
-      changed = true;
     });
-    if (widget.launcherMode) unawaited(save(showMessage: false));
+    _markChanged();
   }
 
   void addTask() {
@@ -654,9 +723,8 @@ class _EditorPageState extends State<EditorPage> {
     setState(() {
       widget.note.tasks.add(TaskItem(text: text));
       taskController.clear();
-      changed = true;
     });
-    if (widget.launcherMode) unawaited(save(showMessage: false));
+    _markChanged();
   }
 
   void updateTask(int index, {bool? done, bool delete = false}) {
@@ -666,20 +734,32 @@ class _EditorPageState extends State<EditorPage> {
       } else if (done != null) {
         widget.note.tasks[index].done = done;
       }
-      changed = true;
     });
-    if (widget.launcherMode) unawaited(save(showMessage: false));
+    _markChanged();
   }
 
   Future<void> syncDrive() async {
     if (!Platform.isAndroid) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Google Drive folder sync is Android-only for now')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Google Drive folder sync is Android-only for now'),
+          ),
+        );
       }
       return;
     }
     await save(showMessage: false);
+    if (autosave.status == SaveStatus.failed) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sync stopped because the note could not be saved'),
+          ),
+        );
+      }
+      return;
+    }
     try {
       var hasFolder =
           await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
@@ -696,7 +776,8 @@ class _EditorPageState extends State<EditorPage> {
       for (final content in remoteRaw.values) {
         try {
           final remote = Note.fromJson(
-              Map<String, dynamic>.from(jsonDecode(content) as Map));
+            Map<String, dynamic>.from(jsonDecode(content) as Map),
+          );
           final local = merged[remote.id];
           if (local == null || remote.updated.isAfter(local.updated)) {
             merged[remote.id] = remote;
@@ -708,16 +789,25 @@ class _EditorPageState extends State<EditorPage> {
       }
       final syncedCurrent = merged[widget.note.id];
       if (syncedCurrent != null && !identical(syncedCurrent, widget.note)) {
-        setState(() {
-          widget.note.title = syncedCurrent.title;
-          widget.note.text = syncedCurrent.text;
-          widget.note.updated = syncedCurrent.updated;
-          widget.note.strokes = syncedCurrent.strokes;
-          widget.note.tasks = syncedCurrent.tasks;
-          titleController.text = syncedCurrent.title;
-          textController.text = syncedCurrent.text;
-          changed = false;
-        });
+        applyingExternalChange = true;
+        try {
+          setState(() {
+            widget.note.title = syncedCurrent.title;
+            widget.note.text = syncedCurrent.text;
+            widget.note.updated = syncedCurrent.updated;
+            widget.note.strokes = syncedCurrent.strokes;
+            widget.note.tasks = syncedCurrent.tasks;
+            selectedStrokes.clear();
+            lastSelectionViewportPoint = null;
+            selectionMoved = false;
+            gestureHistoryRecorded = false;
+            strokeHistory.clear();
+            titleController.text = syncedCurrent.title;
+            textController.text = syncedCurrent.text;
+          });
+        } finally {
+          applyingExternalChange = false;
+        }
       }
       final files = <String, String>{
         for (final item in merged.values)
@@ -725,254 +815,390 @@ class _EditorPageState extends State<EditorPage> {
       };
       await syncChannel.invokeMethod<void>('writeFolder', {'files': files});
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Synced ${files.length} notes with Google Drive')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Synced ${files.length} notes with Google Drive'),
+          ),
+        );
       }
     } on PlatformException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Drive sync error: ${error.message}')));
+          SnackBar(content: Text('Drive sync error: ${error.message}')),
+        );
       }
     }
   }
 
   @override
   Widget build(BuildContext context) => PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        if (changed) await save(showMessage: false);
-        if (!context.mounted) return;
-        if (widget.launcherMode) {
-          await SystemNavigator.pop();
-        } else {
-          Navigator.pop(context);
-        }
-      },
-      child: Scaffold(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          await save(showMessage: false);
+          if (!context.mounted) return;
+          if (autosave.status == SaveStatus.failed) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('The note is still unsaved. Try saving again.'),
+              ),
+            );
+            return;
+          }
+          if (widget.launcherMode) {
+            await SystemNavigator.pop();
+          } else {
+            Navigator.pop(context);
+          }
+        },
+        child: Scaffold(
           appBar: AppBar(
-              leading: widget.launcherMode
-                  ? IconButton(
-                      tooltip: 'All notes',
-                      onPressed: () async {
-                        if (changed) await save(showMessage: false);
-                        if (context.mounted)
-                          await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const LibraryPage()));
-                      },
-                      icon: const Icon(Icons.library_books_outlined))
-                  : null,
-              title: TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(
-                      border: InputBorder.none, hintText: 'Note title'),
-                  style: Theme.of(context).textTheme.titleLarge),
-              actions: [
-                IconButton(
-                    tooltip: 'Undo',
-                    onPressed: widget.note.strokes.isEmpty
-                        ? null
-                        : () => setState(() {
-                              undone.add(widget.note.strokes.removeLast());
-                              changed = true;
-                            }),
-                    icon: const Icon(Icons.undo)),
-                IconButton(
-                    tooltip: 'Redo',
-                    onPressed: undone.isEmpty
-                        ? null
-                        : () => setState(() {
-                              widget.note.strokes.add(undone.removeLast());
-                              changed = true;
-                            }),
-                    icon: const Icon(Icons.redo)),
-                IconButton(
-                    tooltip: 'Save',
-                    onPressed: save,
-                    icon: const Icon(Icons.save_outlined)),
-                PopupMenuButton<String>(
-                    tooltip: 'Note tools',
-                    onSelected: (value) {
-                      switch (value) {
-                        case 'text':
-                          setState(() => showText = !showText);
-                          return;
-                        case 'tasks':
-                          setState(() => showTasks = !showTasks);
-                          return;
-                        case 'paper':
-                          choosePaper();
-                          return;
-                        case 'widget':
-                          pinWidget();
-                          return;
-                        case 'sync':
-                          syncDrive();
-                          return;
-                        case 'update':
-                          save(showMessage: false)
-                              .then((_) => UpdateService.prompt(context));
-                          return;
+            leading: widget.launcherMode
+                ? IconButton(
+                    tooltip: 'All notes',
+                    onPressed: () async {
+                      await save(showMessage: false);
+                      if (autosave.status == SaveStatus.failed) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'The note is still unsaved. Try saving again.',
+                              ),
+                            ),
+                          );
+                        }
+                        return;
                       }
+                      if (context.mounted)
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const LibraryPage()),
+                        );
                     },
-                    itemBuilder: (_) => [
-                          PopupMenuItem(
-                              value: 'text',
-                              child: ListTile(
-                                  leading: const Icon(Icons.text_fields),
-                                  title: Text(showText
-                                      ? 'Hide typed text'
-                                      : 'Show typed text'))),
-                          PopupMenuItem(
-                              value: 'tasks',
-                              child: ListTile(
-                                  leading: const Icon(Icons.checklist_outlined),
-                                  title: Text(showTasks
-                                      ? 'Hide checklist'
-                                      : 'Show checklist'))),
-                          const PopupMenuItem(
-                              value: 'paper',
-                              child: ListTile(
-                                  leading: Icon(Icons.texture),
-                                  title: Text('Paper style'))),
-                          const PopupMenuItem(
-                              value: 'widget',
-                              child: ListTile(
-                                  leading: Icon(Icons.widgets_outlined),
-                                  title: Text('Update home widget'))),
-                          const PopupMenuItem(
-                              value: 'sync',
-                              child: ListTile(
-                                  leading: Icon(Icons.cloud_sync_outlined),
-                                  title: Text('Sync Drive folder'))),
-                          const PopupMenuItem(
-                              value: 'update',
-                              child: ListTile(
-                                  leading: Icon(Icons.system_update_outlined),
-                                  title: Text('Check for updates')))
-                        ])
-              ]),
-          body: Column(children: [
-            SizedBox(
+                    icon: const Icon(Icons.library_books_outlined),
+                  )
+                : null,
+            title: TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                hintText: 'Note title',
+              ),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            actions: [
+              IconButton(
+                tooltip: 'Undo',
+                onPressed: !strokeHistory.canUndo
+                    ? null
+                    : () {
+                        final restored =
+                            strokeHistory.undo(widget.note.strokes);
+                        if (restored == null) return;
+                        setState(
+                          () {
+                            selectedStrokes.clear();
+                            widget.note.strokes = restored;
+                          },
+                        );
+                        _markChanged();
+                      },
+                icon: const Icon(Icons.undo),
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                onPressed: !strokeHistory.canRedo
+                    ? null
+                    : () {
+                        final restored =
+                            strokeHistory.redo(widget.note.strokes);
+                        if (restored == null) return;
+                        setState(
+                          () {
+                            selectedStrokes.clear();
+                            widget.note.strokes = restored;
+                          },
+                        );
+                        _markChanged();
+                      },
+                icon: const Icon(Icons.redo),
+              ),
+              if (MediaQuery.sizeOf(context).width >= 700)
+                TextButton.icon(
+                  onPressed: save,
+                  icon: Icon(saveIcon, size: 19),
+                  label: Text(saveLabel),
+                )
+              else
+                IconButton(
+                  tooltip: saveLabel,
+                  onPressed: save,
+                  icon: Icon(saveIcon),
+                ),
+              PopupMenuButton<String>(
+                tooltip: 'Note tools',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'text':
+                      setState(() => showText = !showText);
+                      return;
+                    case 'tasks':
+                      setState(() => showTasks = !showTasks);
+                      return;
+                    case 'paper':
+                      choosePaper();
+                      return;
+                    case 'widget':
+                      pinWidget();
+                      return;
+                    case 'sync':
+                      syncDrive();
+                      return;
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'text',
+                    child: ListTile(
+                      leading: const Icon(Icons.text_fields),
+                      title: Text(
+                          showText ? 'Hide typed text' : 'Show typed text'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'tasks',
+                    child: ListTile(
+                      leading: const Icon(Icons.checklist_outlined),
+                      title:
+                          Text(showTasks ? 'Hide checklist' : 'Show checklist'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'paper',
+                    child: ListTile(
+                      leading: Icon(Icons.texture),
+                      title: Text('Paper style'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'widget',
+                    child: ListTile(
+                      leading: Icon(Icons.widgets_outlined),
+                      title: Text('Update home widget'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'sync',
+                    child: ListTile(
+                      leading: Icon(Icons.cloud_sync_outlined),
+                      title: Text('Sync Drive folder'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          body: Column(
+            children: [
+              SizedBox(
                 height: 58,
                 child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    children: [
-                      for (final entry in [
-                        (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-                        (DrawTool.pen, Icons.edit, 'Pen'),
-                        (
-                          DrawTool.highlighter,
-                          Icons.border_color,
-                          'Highlighter'
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  children: [
+                    for (final entry in [
+                      (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+                      (DrawTool.select, Icons.select_all, 'Select'),
+                      (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
+                      (DrawTool.pen, Icons.edit, 'Pen'),
+                      (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
+                      (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: ChoiceChip(
+                          label: Text(entry.$3),
+                          avatar: Icon(entry.$2, size: 18),
+                          selected: tool == entry.$1,
+                          onSelected: (_) => setState(() {
+                            tool = entry.$1;
+                            if (tool != DrawTool.select)
+                              selectedStrokes.clear();
+                          }),
                         ),
-                        (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser')
-                      ])
-                        Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: ChoiceChip(
-                                label: Text(entry.$3),
-                                avatar: Icon(entry.$2, size: 18),
-                                selected: tool == entry.$1,
-                                onSelected: (_) =>
-                                    setState(() => tool = entry.$1))),
-                      for (final c in [
-                        Colors.black,
-                        Colors.blue,
-                        Colors.red,
-                        Colors.green,
-                        Colors.orange,
-                        Colors.purple
-                      ])
-                        Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: InkWell(
-                                onTap: () => setState(() => ink = c),
-                                child: CircleAvatar(
-                                    radius: 15,
-                                    backgroundColor: c,
-                                    child: ink == c
-                                        ? const Icon(Icons.check,
-                                            size: 17, color: Colors.white)
-                                        : null)))
-                    ])),
-            if (showText)
-              Padding(
+                      ),
+                    if (selectedStrokes.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text('Delete selection'),
+                          onPressed: deleteSelection,
+                        ),
+                      ),
+                    for (final c in [
+                      Colors.black,
+                      Colors.blue,
+                      Colors.red,
+                      Colors.green,
+                      Colors.orange,
+                      Colors.purple,
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: InkWell(
+                          onTap: () => setState(() => ink = c),
+                          child: CircleAvatar(
+                            radius: 15,
+                            backgroundColor: c,
+                            child: ink == c
+                                ? const Icon(
+                                    Icons.check,
+                                    size: 17,
+                                    color: Colors.white,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (showText)
+                Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                   child: TextField(
-                      controller: textController,
-                      minLines: 2,
-                      maxLines: 5,
-                      keyboardType: TextInputType.multiline,
-                      decoration: const InputDecoration(
-                          hintText: 'Type text here…',
-                          border: OutlineInputBorder()))),
-            if (showTasks)
-              ConstrainedBox(
+                    controller: textController,
+                    minLines: 2,
+                    maxLines: 5,
+                    keyboardType: TextInputType.multiline,
+                    decoration: const InputDecoration(
+                      hintText: 'Type text here…',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              if (showTasks)
+                ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 220),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Padding(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-                        child: Row(children: [
-                          Expanded(
+                        child: Row(
+                          children: [
+                            Expanded(
                               child: TextField(
-                                  controller: taskController,
-                                  onSubmitted: (_) => addTask(),
-                                  decoration: const InputDecoration(
-                                      hintText: 'Add a task',
-                                      isDense: true,
-                                      border: OutlineInputBorder()))),
-                          IconButton(
+                                controller: taskController,
+                                onSubmitted: (_) => addTask(),
+                                decoration: const InputDecoration(
+                                  hintText: 'Add a task',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                            ),
+                            IconButton(
                               tooltip: 'Add task',
                               onPressed: addTask,
-                              icon: const Icon(Icons.add_task))
-                        ])),
-                    Flexible(
+                              icon: const Icon(Icons.add_task),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Flexible(
                         child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: widget.note.tasks.length,
-                            itemBuilder: (context, index) {
-                              final task = widget.note.tasks[index];
-                              return CheckboxListTile(
-                                  dense: true,
-                                  value: task.done,
-                                  onChanged: (value) =>
-                                      updateTask(index, done: value),
-                                  title: Text(task.text,
-                                      style: task.done
-                                          ? const TextStyle(
-                                              decoration:
-                                                  TextDecoration.lineThrough)
-                                          : null),
-                                  secondary: IconButton(
-                                      tooltip: 'Delete task',
-                                      onPressed: () =>
-                                          updateTask(index, delete: true),
-                                      icon: const Icon(Icons.close)));
-                            }))
-                  ])),
-            Expanded(
+                          shrinkWrap: true,
+                          itemCount: widget.note.tasks.length,
+                          itemBuilder: (context, index) {
+                            final task = widget.note.tasks[index];
+                            return CheckboxListTile(
+                              dense: true,
+                              value: task.done,
+                              onChanged: (value) =>
+                                  updateTask(index, done: value),
+                              title: Text(
+                                task.text,
+                                style: task.done
+                                    ? const TextStyle(
+                                        decoration: TextDecoration.lineThrough,
+                                      )
+                                    : null,
+                              ),
+                              secondary: IconButton(
+                                tooltip: 'Delete task',
+                                onPressed: () =>
+                                    updateTask(index, delete: true),
+                                icon: const Icon(Icons.close),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Expanded(
                 child: LayoutBuilder(
-                    builder: (context, constraints) => ClipRect(
-                        child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onPanStart: (d) => begin(d.localPosition),
-                            onPanUpdate: (d) => move(d.localPosition),
-                            onPanEnd: (_) => end(),
-                            child: CustomPaint(
-                                size: Size.infinite,
-                                painter: InkPainter(widget.note.strokes, active,
-                                    background:
-                                        Color(widget.note.backgroundColor),
-                                    pattern: PaperPattern.values.firstWhere(
-                                        (item) =>
-                                            item.name ==
-                                            widget.note.backgroundPattern,
-                                        orElse: () => PaperPattern.lined)))))))
-          ])));
+                  builder: (context, constraints) {
+                    final canvasWidth = math.max(2000.0, constraints.maxWidth);
+                    final canvasHeight =
+                        math.max(3000.0, constraints.maxHeight * 3);
+                    final isHandTool = tool == DrawTool.hand;
+                    return ClipRect(
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: isHandTool
+                            ? null
+                            : (event) => begin(event.localPosition),
+                        onPointerMove: isHandTool
+                            ? null
+                            : (event) => move(event.localPosition),
+                        onPointerUp: isHandTool ? null : (_) => end(),
+                        onPointerCancel: isHandTool ? null : (_) => end(),
+                        child: IgnorePointer(
+                          ignoring: !isHandTool,
+                          child: InteractiveViewer(
+                            transformationController: transformationController,
+                            alignment: Alignment.topLeft,
+                            constrained: false,
+                            boundaryMargin: const EdgeInsets.all(500),
+                            minScale: 0.25,
+                            maxScale: 5,
+                            child: SizedBox(
+                              width: canvasWidth,
+                              height: canvasHeight,
+                              child: CustomPaint(
+                                painter: InkPainter(
+                                  widget.note.strokes,
+                                  active,
+                                  selectedIndices: selectedStrokes,
+                                  selectionScale: canvasTransform.scale,
+                                  background:
+                                      Color(widget.note.backgroundColor),
+                                  pattern: PaperPattern.values.firstWhere(
+                                    (item) =>
+                                        item.name ==
+                                        widget.note.backgroundPattern,
+                                    orElse: () => PaperPattern.lined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 class InkPainter extends CustomPainter {
@@ -980,9 +1206,16 @@ class InkPainter extends CustomPainter {
   final Stroke? active;
   final Color background;
   final PaperPattern pattern;
-  InkPainter(this.strokes, this.active,
-      {this.background = const Color(0xfffffdf7),
-      this.pattern = PaperPattern.lined});
+  final Set<int> selectedIndices;
+  final double selectionScale;
+  InkPainter(
+    this.strokes,
+    this.active, {
+    this.background = const Color(0xfffffdf7),
+    this.pattern = PaperPattern.lined,
+    this.selectedIndices = const {},
+    this.selectionScale = 1,
+  });
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawColor(background, BlendMode.src);
@@ -1018,13 +1251,37 @@ class InkPainter extends CustomPainter {
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke;
       if (s.points.length == 1) {
-        canvas.drawPoints(ui.PointMode.points,
-            [Offset(s.points.first.x, s.points.first.y)], p);
+        canvas.drawPoints(
+            ui.PointMode.points,
+            [
+              Offset(s.points.first.x, s.points.first.y),
+            ],
+            p);
         continue;
       }
       final path = Path()..moveTo(s.points.first.x, s.points.first.y);
       for (final pt in s.points.skip(1)) path.lineTo(pt.x, pt.y);
       canvas.drawPath(path, p);
+    }
+    final selectionBounds = strokeBoundsForSelection(strokes, selectedIndices);
+    if (selectionBounds != null) {
+      final padding = 8 / selectionScale;
+      final selectionPaint = Paint()
+        ..color = const Color(0xff3f51b5)
+        ..strokeWidth = 2 / selectionScale
+        ..style = PaintingStyle.stroke;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(
+            selectionBounds.left - padding,
+            selectionBounds.top - padding,
+            selectionBounds.right + padding,
+            selectionBounds.bottom + padding,
+          ),
+          Radius.circular(6 / selectionScale),
+        ),
+        selectionPaint,
+      );
     }
   }
 
