@@ -74,6 +74,7 @@ class TaskItem {
 class TextBlockFormat {
   bool bold;
   int color;
+  double fontSize;
   double x;
   double y;
   double width;
@@ -82,6 +83,7 @@ class TextBlockFormat {
   TextBlockFormat({
     this.bold = false,
     this.color = 0xff000000,
+    this.fontSize = 20,
     this.x = 48,
     this.y = 48,
     this.width = 320,
@@ -92,6 +94,7 @@ class TextBlockFormat {
       TextBlockFormat(
         bold: value['bold'] as bool? ?? false,
         color: value['color'] as int? ?? 0xff000000,
+        fontSize: (value['fontSize'] as num?)?.toDouble() ?? 20,
         x: (value['x'] as num?)?.toDouble() ?? 48,
         y: (value['y'] as num?)?.toDouble() ?? 48,
         width: (value['width'] as num?)?.toDouble() ?? 320,
@@ -101,6 +104,7 @@ class TextBlockFormat {
   Map<String, dynamic> toJson() => {
         'bold': bold,
         'color': color,
+        'fontSize': fontSize,
         'x': x,
         'y': y,
         'width': width,

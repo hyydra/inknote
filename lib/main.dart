@@ -15,7 +15,7 @@ import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.4');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.5');
 
 class UpdateInfo {
   final String version;
@@ -341,6 +341,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const syncChannel = MethodChannel('notes/sync');
   late final TextEditingController titleController;
   final List<TextEditingController> textControllers = [];
+  final List<FocusNode> textFocusNodes = [];
   final List<TextBlockFormat> textFormats = [];
   int activeTextIndex = 0;
   late final TextEditingController taskController;
@@ -388,6 +389,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     for (final controller in textControllers) {
       controller.dispose();
     }
+    for (final focusNode in textFocusNodes) {
+      focusNode.dispose();
+    }
     taskController.dispose();
     transformationController.dispose();
     super.dispose();
@@ -423,9 +427,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     for (final controller in textControllers) {
       controller.dispose();
     }
+    for (final focusNode in textFocusNodes) {
+      focusNode.dispose();
+    }
     textControllers
       ..clear()
       ..addAll(blocks.map(_textController));
+    textFocusNodes
+      ..clear()
+      ..addAll(List.generate(textControllers.length, (_) => FocusNode()));
     final savedFormats = formats?.toList() ?? const <TextBlockFormat>[];
     textFormats
       ..clear()
@@ -435,6 +445,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ? TextBlockFormat(
                 bold: savedFormats[index].bold,
                 color: savedFormats[index].color,
+                fontSize: savedFormats[index].fontSize,
                 x: savedFormats[index].x,
                 y: savedFormats[index].y,
                 width: savedFormats[index].width,
@@ -452,6 +463,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       showText = true;
       tool = DrawTool.text;
       textControllers.add(_textController(''));
+      textFocusNodes.add(FocusNode());
       textFormats.add(TextBlockFormat(
         x: 48 + (textControllers.length % 3) * 24,
         y: 48 + (textControllers.length - 1) * 184,
@@ -459,11 +471,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       activeTextIndex = textControllers.length - 1;
     });
     _markChanged();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || textFocusNodes.isEmpty) return;
+      textFocusNodes.last.requestFocus();
+    });
   }
 
   void removeTextBlock(int index) {
     setState(() {
       textControllers.removeAt(index).dispose();
+      textFocusNodes.removeAt(index).dispose();
       textFormats.removeAt(index);
       activeTextIndex = textControllers.isEmpty
           ? 0
@@ -744,6 +761,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         .map((format) => TextBlockFormat(
               bold: format.bold,
               color: format.color,
+              fontSize: format.fontSize,
               x: format.x,
               y: format.y,
               width: format.width,
@@ -1008,8 +1026,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       Directory? windowsFolder;
       Map<String, String> remoteRaw;
       if (Platform.isAndroid) {
-        var hasFolder =
-            await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
+        var hasFolder = false;
+        if (!chooseFolder) {
+          hasFolder =
+              await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
+        }
         if (!hasFolder) {
           hasFolder =
               await syncChannel.invokeMethod<bool>('chooseFolder') ?? false;
@@ -1049,6 +1070,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 .map((format) => TextBlockFormat(
                       bold: format.bold,
                       color: format.color,
+                      fontSize: format.fontSize,
                       x: format.x,
                       y: format.y,
                       width: format.width,
@@ -1091,6 +1113,25 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           ),
         );
       }
+    } on PlatformException catch (error) {
+      if (mounted) {
+        final message = error.message?.trim();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              message == null || message.isEmpty
+                  ? 'Drive folder access failed'
+                  : message,
+            ),
+            action: Platform.isAndroid
+                ? SnackBarAction(
+                    label: 'Choose folder',
+                    onPressed: () => syncDrive(chooseFolder: true),
+                  )
+                : null,
+          ),
+        );
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1100,164 +1141,167 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
   }
 
-  Widget _androidDrawingToolbar() => SizedBox(
-        key: const Key('android-drawing-toolbar'),
-        height: 64,
-        child: Material(
-          elevation: 6,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            children: [
-              for (final entry in [
-                (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
-                (DrawTool.text, Icons.text_fields, 'Text'),
-                (DrawTool.select, Icons.select_all, 'Select'),
-                (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-                (DrawTool.pen, Icons.edit, 'Pen'),
-                (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
-                (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
-              ])
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: ChoiceChip(
-                    label: Text(entry.$3),
-                    avatar: Icon(entry.$2, size: 18),
-                    selected: tool == entry.$1,
-                    onSelected: (_) => setState(() {
-                      tool = entry.$1;
-                      if (tool == DrawTool.text) showText = true;
-                      if (tool != DrawTool.select) selectedStrokes.clear();
-                    }),
+  Widget _androidDrawingToolbar() {
+    final tools = [
+      (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+      (DrawTool.text, Icons.text_fields, 'Text'),
+      (DrawTool.select, Icons.select_all, 'Select'),
+      (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
+      (DrawTool.pen, Icons.edit, 'Pen'),
+      (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
+      (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+    ];
+    return SizedBox(
+      key: const Key('android-drawing-toolbar'),
+      height: 64,
+      child: Material(
+        elevation: 6,
+        child: Row(
+          children: [
+            for (final entry in tools)
+              Expanded(
+                child: IconButton(
+                  tooltip: entry.$3,
+                  style: IconButton.styleFrom(
+                    backgroundColor: tool == entry.$1
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : null,
                   ),
-                ),
-              if (selectedStrokes.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: ActionChip(
-                    avatar: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Delete selection'),
-                    onPressed: deleteSelection,
-                  ),
-                ),
-              for (final color in [
-                Colors.black,
-                Colors.blue,
-                Colors.red,
-                Colors.green,
-                Colors.orange,
-                Colors.purple,
-              ])
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: InkWell(
-                    onTap: () => setState(() => strokeColor = color),
-                    child: CircleAvatar(
-                      radius: 15,
-                      backgroundColor: color,
-                      child: strokeColor == color
-                          ? const Icon(Icons.check,
-                              size: 17, color: Colors.white)
-                          : null,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-
-  Widget _textToolbar() => SizedBox(
-        key: const Key('text-toolbar'),
-        height: 52,
-        child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerLow,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(4),
-                child: ChoiceChip(
-                  avatar: const Icon(Icons.text_fields, size: 18),
-                  label: const Text('Text blocks'),
-                  selected: tool == DrawTool.text,
-                  onSelected: (selected) => setState(() {
-                    showText = true;
-                    tool = selected ? DrawTool.text : DrawTool.hand;
+                  onPressed: () => setState(() {
+                    tool = entry.$1;
+                    if (tool == DrawTool.text) showText = true;
+                    if (tool != DrawTool.select) selectedStrokes.clear();
                   }),
+                  icon: Icon(entry.$2),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(4),
-                child: ActionChip(
-                  avatar: const Icon(Icons.add, size: 18),
-                  label: const Text('Add text block'),
-                  tooltip: 'Add text block',
-                  onPressed: addTextBlock,
-                ),
-              ),
-              if (textControllers.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Center(
-                    child: Text(
-                      '${textControllers.length} text ${textControllers.length == 1 ? 'block' : 'blocks'}',
-                      style: Theme.of(context).textTheme.bodySmall,
+            Expanded(
+              child: selectedStrokes.isNotEmpty
+                  ? IconButton(
+                      tooltip: 'Delete selection',
+                      onPressed: deleteSelection,
+                      icon: const Icon(Icons.delete_outline),
+                    )
+                  : PopupMenuButton<Color>(
+                      tooltip: 'Drawing colour',
+                      icon: Icon(Icons.circle, color: strokeColor),
+                      onSelected: (color) =>
+                          setState(() => strokeColor = color),
+                      itemBuilder: (_) => [
+                        for (final color in const [
+                          Colors.black,
+                          Colors.blue,
+                          Colors.red,
+                          Colors.green,
+                          Colors.orange,
+                          Colors.purple,
+                        ])
+                          PopupMenuItem(
+                            value: color,
+                            child: Row(
+                              children: [
+                                Icon(Icons.circle, color: color),
+                                const SizedBox(width: 12),
+                                Text(color == strokeColor ? 'Selected' : 'Use'),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
-                  ),
-                ),
-              if (textControllers.isNotEmpty) ...[
-                IconButton(
-                  tooltip: 'Checklist',
-                  onPressed: () => _toggleLinePrefix('☐ '),
-                  icon: const Icon(Icons.check_box_outlined),
-                ),
-                IconButton(
-                  tooltip: 'Numbered list',
-                  onPressed: () => _toggleLinePrefix('1. '),
-                  icon: const Icon(Icons.format_list_numbered),
-                ),
-                IconButton(
-                  tooltip: 'Bulleted list',
-                  onPressed: () => _toggleLinePrefix('• '),
-                  icon: const Icon(Icons.format_list_bulleted),
-                ),
-                IconButton(
-                  tooltip: 'Decrease indent',
-                  onPressed: () => _changeIndent(false),
-                  icon: const Icon(Icons.format_indent_decrease),
-                ),
-                IconButton(
-                  tooltip: 'Increase indent',
-                  onPressed: () => _changeIndent(true),
-                  icon: const Icon(Icons.format_indent_increase),
-                ),
-                IconButton(
-                  tooltip: 'Text colour',
-                  onPressed: _chooseTextColor,
-                  icon: Icon(
-                    Icons.format_color_text,
-                    color: Color(textFormats[activeTextIndex].color),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Bold',
-                  isSelected: textFormats[activeTextIndex].bold,
-                  onPressed: () {
-                    setState(() {
-                      textFormats[activeTextIndex].bold =
-                          !textFormats[activeTextIndex].bold;
-                    });
-                    _markChanged();
-                  },
-                  icon: const Icon(Icons.format_bold),
-                ),
-              ],
-            ],
-          ),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
+
+  Widget _textToolbar() {
+    final canFormat = textControllers.isNotEmpty;
+    final format = canFormat ? textFormats[activeTextIndex] : null;
+    Widget slot(Widget child) => Expanded(child: Center(child: child));
+    return SizedBox(
+      key: const Key('text-toolbar'),
+      height: 60,
+      child: Material(
+        elevation: 6,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: Row(
+          children: [
+            slot(IconButton(
+              tooltip: 'Drawing tools',
+              onPressed: () => setState(() => tool = DrawTool.pen),
+              icon: const Icon(Icons.gesture),
+            )),
+            slot(IconButton(
+              tooltip: 'Add text block',
+              onPressed: addTextBlock,
+              icon: const Icon(Icons.add_box_outlined),
+            )),
+            slot(PopupMenuButton<String>(
+              tooltip: 'Lists',
+              enabled: canFormat,
+              icon: const Icon(Icons.check_box_outlined),
+              onSelected: (value) {
+                if (value == 'check') _toggleLinePrefix('☐ ');
+                if (value == 'number') _toggleLinePrefix('1. ');
+                if (value == 'bullet') _toggleLinePrefix('• ');
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'check', child: Text('Checklist')),
+                PopupMenuItem(value: 'number', child: Text('Numbered list')),
+                PopupMenuItem(value: 'bullet', child: Text('Bulleted list')),
+              ],
+            )),
+            slot(IconButton(
+              tooltip: 'Text colour',
+              onPressed: canFormat ? _chooseTextColor : null,
+              icon: Icon(
+                Icons.format_color_text,
+                color: format == null ? null : Color(format.color),
+              ),
+            )),
+            slot(PopupMenuButton<double>(
+              tooltip: 'Font size',
+              enabled: canFormat,
+              icon: Text(
+                format == null ? 'Aa' : '${format.fontSize.round()}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              onSelected: (size) {
+                setState(() => format!.fontSize = size);
+                _markChanged();
+              },
+              itemBuilder: (_) => [
+                for (final size in const [14.0, 18.0, 20.0, 24.0, 30.0, 36.0])
+                  PopupMenuItem(value: size, child: Text('${size.round()}')),
+              ],
+            )),
+            slot(IconButton(
+              tooltip: 'Bold',
+              isSelected: format?.bold ?? false,
+              onPressed: canFormat
+                  ? () {
+                      setState(() => format!.bold = !format.bold);
+                      _markChanged();
+                    }
+                  : null,
+              icon: const Icon(Icons.format_bold),
+            )),
+            slot(PopupMenuButton<bool>(
+              tooltip: 'Indent',
+              enabled: canFormat,
+              icon: const Icon(Icons.format_indent_increase),
+              onSelected: _changeIndent,
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: false, child: Text('Decrease indent')),
+                PopupMenuItem(value: true, child: Text('Increase indent')),
+              ],
+            )),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _canvasTextBlock(int index) {
     final format = textFormats[index];
@@ -1290,6 +1334,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 child: TextField(
                   key: ValueKey('canvas-text-field-$index'),
                   controller: textControllers[index],
+                  focusNode: textFocusNodes[index],
                   onTap: () {
                     setState(() {
                       activeTextIndex = index;
@@ -1306,6 +1351,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   textAlignVertical: TextAlignVertical.top,
                   style: TextStyle(
                     color: Color(format.color),
+                    fontSize: format.fontSize,
                     fontWeight:
                         format.bold ? FontWeight.bold : FontWeight.normal,
                   ),
@@ -1566,12 +1612,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       title: Text('Sync Drive folder'),
                     ),
                   ),
-                  if (Platform.isWindows)
-                    const PopupMenuItem(
+                  if (Platform.isAndroid || Platform.isWindows)
+                    PopupMenuItem(
                       value: 'sync-folder',
                       child: ListTile(
-                        leading: Icon(Icons.folder_open_outlined),
-                        title: Text('Choose Drive folder'),
+                        leading: const Icon(Icons.folder_open_outlined),
+                        title: Text(Platform.isAndroid
+                            ? 'Choose Google Drive folder'
+                            : 'Choose Drive folder'),
                       ),
                     ),
                   if (Platform.isAndroid || Platform.isWindows)

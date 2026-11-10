@@ -150,12 +150,19 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.text('Text blocks'), findsOneWidget);
-    expect(find.text('Add text block'), findsWidgets);
+    expect(find.byTooltip('Add text block'), findsOneWidget);
+    expect(find.byTooltip('Lists'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('text-toolbar')),
+        matching: find.byType(ListView),
+      ),
+      findsNothing,
+    );
 
     await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
-    expect(find.text('1 text block'), findsOneWidget);
+    expect(find.byKey(const ValueKey('canvas-text-block-0')), findsOneWidget);
     expect(
       tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
       greaterThan(600),
@@ -174,7 +181,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.tap(find.byTooltip('Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
     expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);

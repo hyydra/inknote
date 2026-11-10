@@ -24,11 +24,11 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 - A large canvas with a Hand tool for pan and zoom, plus stroke selection, movement and deletion at any zoom level.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
-- On Android, the cloud-sync button selects a Google Drive folder through the system folder picker. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
+- On Android, the cloud-sync button selects a writable Google Drive folder through the system folder picker, and the folder can be reselected if access expires. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way, imports existing Pennino JSON notes, and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
 - Versioned JSON persistence in the application documents directory, with atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background autosave for every editor change, with Saved, Unsaved, Saving and Save failed states.
-- Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds and can be moved or resized with their selection handles; a dedicated text toolbar stays visible in the editor.
-- A bottom drawing toolbar on Android, keeping tools within thumb reach while leaving the canvas visible.
+- Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds, receive focus immediately when added, and can be moved or resized with their selection handles.
+- Fixed, non-scrolling bottom drawing and text toolbars keep every tool on screen. Text controls include lists, colour, font size, bold and indentation.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
 - Automatic update checks run on every application start. When a newer release is available, Windows displays a prompt, downloads `Pennino-Windows-Setup.exe` and launches the installer after the user accepts; the drawing toolbar also shows the current version and offers a manual check. Android downloads the universal APK and opens the system installer.
@@ -51,7 +51,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.4` builds and publishes three assets:
+Pushing a version tag such as `v0.4.5` builds and publishes three assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.

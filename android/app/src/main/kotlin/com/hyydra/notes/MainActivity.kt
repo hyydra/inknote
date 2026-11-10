@@ -120,14 +120,30 @@ class MainActivity : FlutterActivity() {
         }
         val flags = (data?.flags ?: 0) and
             (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        contentResolver.takePersistableUriPermission(uri, flags)
-        getSharedPreferences("notes_sync", Context.MODE_PRIVATE)
-            .edit().putString("folder_uri", uri.toString()).apply()
-        result?.success(true)
+        try {
+            if (flags and Intent.FLAG_GRANT_READ_URI_PERMISSION == 0 ||
+                flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION == 0
+            ) {
+                error("The selected folder did not grant read and write access")
+            }
+            contentResolver.takePersistableUriPermission(uri, flags)
+            getSharedPreferences("notes_sync", Context.MODE_PRIVATE)
+                .edit().putString("folder_uri", uri.toString()).apply()
+            result?.success(true)
+        } catch (error: Exception) {
+            result?.error(
+                "folder_permission",
+                "Could not keep access to this folder. Choose another Drive folder.",
+                error.message
+            )
+        }
     }
 
     private fun folderEntries(): Map<String, Uri> {
         val tree = folderUri() ?: error("Choose a Google Drive folder first")
+        if (!hasFolderAccess()) {
+            error("Drive folder access expired. Choose the folder again.")
+        }
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(
             tree, DocumentsContract.getTreeDocumentId(tree)
         )
@@ -158,14 +174,29 @@ class MainActivity : FlutterActivity() {
 
     private fun writeFolder(files: Map<String, String>) {
         val tree = folderUri() ?: error("Choose a Google Drive folder first")
+        val parent = DocumentsContract.buildDocumentUriUsingTree(
+            tree, DocumentsContract.getTreeDocumentId(tree)
+        )
         val existing = folderEntries()
         files.forEach { (name, content) ->
             val uri = existing[name] ?: DocumentsContract.createDocument(
-                contentResolver, tree, "application/json", name
+                contentResolver, parent, "application/json", name
             ) ?: error("Could not create $name")
-            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use {
-                it.write(content)
-            } ?: error("Could not write $name")
+            writeText(uri, content, name)
         }
+    }
+
+    private fun writeText(uri: Uri, content: String, name: String) {
+        var lastError: Exception? = null
+        for (mode in listOf("wt", "w", "rwt")) {
+            try {
+                val stream = contentResolver.openOutputStream(uri, mode) ?: continue
+                stream.bufferedWriter().use { writer -> writer.write(content) }
+                return
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw IllegalStateException("Could not write $name", lastError)
     }
 }

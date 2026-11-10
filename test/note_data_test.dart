@@ -50,7 +50,8 @@ Future<void> main() async {
     ..x = 123
     ..y = 234
     ..width = 456
-    ..height = 178;
+    ..height = 178
+    ..fontSize = 24;
   final positionedRoundTrip = Note.fromJson(blocksRoundTrip.toJson());
   expectEqual(positionedRoundTrip.textBlockFormats.first.x, 123.0,
       'text block x position survives serialization');
@@ -60,6 +61,8 @@ Future<void> main() async {
       'text block width survives serialization');
   expectEqual(positionedRoundTrip.textBlockFormats.first.height, 178.0,
       'text block height survives serialization');
+  expectEqual(positionedRoundTrip.textBlockFormats.first.fontSize, 24.0,
+      'text block font size survives serialization');
   print('PASS multiple text blocks survive serialization');
 
   var rejectedFutureVersion = false;
