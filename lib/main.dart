@@ -1435,7 +1435,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             }),
                           ),
                         ),
-                      if (Platform.isWindows)
+                      if (Theme.of(context).platform == TargetPlatform.windows)
                         Padding(
                           padding: const EdgeInsets.all(4),
                           child: ActionChip(
