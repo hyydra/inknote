@@ -1,6 +1,6 @@
 # InkNote — Android + Windows handwritten notes prototype
 
-**Status:** working MVP for compatible Android phones, Android tablets and Windows. It is **not** a completed Samsung Notes replacement and has no Samsung-specific dependency.
+**Status:** working MVP for compatible Android phones, Android tablets and Windows.
 
 ## Included
 - Multiple local notes with typed text, checklists and editable ink strokes. Drawing tools include pencil, pen, highlighter, whole-stroke eraser and undo/redo.
@@ -35,7 +35,6 @@ To show a note on the Android home screen: open the note, choose **Update home w
 - A future release should provide proper widget instance selection, note-specific deep links, refresh on sync and screen-reader descriptions.
 - The local file replacement is not crash-atomic on all OSes; add robust backups and migration tests.
 - Android widget bitmap should be size-constrained, downsampled according to system limits, and tested on Android 16/17 devices.
-- Not affiliated with Samsung. Reproduce functionality, not Samsung brand assets/trademarks.
 
 ## GitHub releases
 
