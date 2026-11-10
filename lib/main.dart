@@ -15,8 +15,8 @@ import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
 
-const inkNoteVersion =
-    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.1');
+const penninoVersion =
+    String.fromEnvironment('PENNINO_VERSION', defaultValue: '0.4.1');
 
 class UpdateInfo {
   final String version;
@@ -26,7 +26,7 @@ class UpdateInfo {
 }
 
 class UpdateService {
-  static const _channel = MethodChannel('inknote/update');
+  static const _channel = MethodChannel('pennino/update');
   static bool _checked = false;
 
   static List<int> _parts(String value) => value
@@ -54,14 +54,14 @@ class UpdateService {
           'https://api.github.com/repos/hyydra/pennino/releases/latest'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
-        ..set(HttpHeaders.userAgentHeader, 'InkNote/$inkNoteVersion');
+        ..set(HttpHeaders.userAgentHeader, 'Pennino/$penninoVersion');
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) return null;
       final release = jsonDecode(await response.transform(utf8.decoder).join())
           as Map<String, dynamic>;
       final version =
           (release['tag_name'] as String? ?? '').replaceFirst('v', '');
-      if (!_isNewer(version, inkNoteVersion)) return null;
+      if (!_isNewer(version, penninoVersion)) return null;
       final suffix = Platform.isAndroid ? '.apk' : '.zip';
       final assets =
           (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
@@ -85,14 +85,14 @@ class UpdateService {
     if (update == null) {
       if (!automatic) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('InkNote is up to date.')));
+            const SnackBar(content: Text('Pennino is up to date.')));
       }
       return;
     }
     final install = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-              title: const Text('InkNote update available'),
+              title: const Text('Pennino update available'),
               content: Text(
                   'Version ${update.version} is available. Download and install it now?'),
               actions: [
@@ -126,8 +126,8 @@ class UpdateService {
         String quoted(String value) => value.replaceAll("'", "''");
         final script = File('${file.path}.ps1');
         await script.writeAsString('''
-param([int]\$InkNotePid)
-Wait-Process -Id \$InkNotePid -ErrorAction SilentlyContinue
+param([int]\$PenninoPid)
+Wait-Process -Id \$PenninoPid -ErrorAction SilentlyContinue
 Expand-Archive -LiteralPath '${quoted(file.path)}' -DestinationPath '${quoted(installDir)}' -Force
 Start-Process -FilePath '${quoted(app)}'
 Remove-Item -LiteralPath \$PSCommandPath -Force
@@ -158,15 +158,15 @@ Remove-Item -LiteralPath \$PSCommandPath -Force
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const InkNoteApp());
+  runApp(const PenninoApp());
 }
 
-class InkNoteApp extends StatelessWidget {
-  const InkNoteApp({super.key});
+class PenninoApp extends StatelessWidget {
+  const PenninoApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'InkNote',
+        title: 'Pennino',
         theme: ThemeData(
           useMaterial3: true,
           colorSchemeSeed: const Color(0xff594fc8),
@@ -177,7 +177,7 @@ class InkNoteApp extends StatelessWidget {
 }
 
 Future<Directory> _noteDirectory() async =>
-    Directory('${(await getApplicationDocumentsDirectory()).path}/inknote');
+    Directory('${(await getApplicationDocumentsDirectory()).path}/pennino');
 
 class LauncherCanvasPage extends StatefulWidget {
   const LauncherCanvasPage({super.key});
@@ -334,8 +334,8 @@ class EditorPage extends StatefulWidget {
 }
 
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
-  static const widgetChannel = MethodChannel('inknote/widget');
-  static const syncChannel = MethodChannel('inknote/sync');
+  static const widgetChannel = MethodChannel('pennino/widget');
+  static const syncChannel = MethodChannel('pennino/sync');
   late final TextEditingController titleController;
   final List<TextEditingController> textControllers = [];
   late final TextEditingController taskController;
@@ -662,7 +662,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Widget updated. Add InkNote widget from the Android home screen.',
+              'Widget updated. Add Pennino widget from the Android home screen.',
             ),
           ),
         );

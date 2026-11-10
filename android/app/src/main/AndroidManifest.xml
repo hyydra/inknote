@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
-        android:label="InkNote"
+        android:label="Pennino"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -33,14 +33,14 @@
             android:name="flutterEmbedding"
             android:value="2" />
         <receiver
-            android:name=".InkNoteWidget"
+            android:name=".PenninoWidget"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/inknote_widget_info" />
+                android:resource="@xml/pennino_widget_info" />
         </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"

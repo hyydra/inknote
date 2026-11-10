@@ -1,7 +1,7 @@
 // ignore_for_file: avoid_print
 
-import 'package:inknote/canvas_editing.dart';
-import 'package:inknote/note_data.dart';
+import 'package:pennino/canvas_editing.dart';
+import 'package:pennino/note_data.dart';
 
 void expectClose(double actual, double expected, String message) {
   if ((actual - expected).abs() > 0.0001) {

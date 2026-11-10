@@ -3,8 +3,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:inknote/note_data.dart';
-import 'package:inknote/note_store.dart';
+import 'package:pennino/note_data.dart';
+import 'package:pennino/note_store.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {
@@ -16,7 +16,7 @@ Note note(String title, DateTime updated) =>
     Note(id: 'note-1', title: title, updated: updated, strokes: []);
 
 Future<void> main() async {
-  final directory = await Directory.systemTemp.createTemp('inknote-store-');
+  final directory = await Directory.systemTemp.createTemp('pennino-store-');
   try {
     final store = NoteStore(directoryProvider: () async => directory);
     final first = note('First version', DateTime.utc(2026, 11, 9, 10));
@@ -104,7 +104,7 @@ Future<void> main() async {
     try {
       await store.save(
         Note(
-          id: '../../outside-inknote',
+          id: '../../outside-pennino',
           title: 'Unsafe',
           updated: DateTime.utc(2026, 11, 9, 13),
           strokes: [],
@@ -119,7 +119,7 @@ Future<void> main() async {
       'path traversal note id is rejected at the storage boundary',
     );
     expectEqual(
-      await File('${directory.parent.path}/outside-inknote.json').exists(),
+      await File('${directory.parent.path}/outside-pennino.json').exists(),
       false,
       'unsafe note id cannot write outside the note directory',
     );

@@ -1,4 +1,4 @@
-InkNote is a handwriting-first notebook. Open the app to start writing on the launcher canvas, or browse and edit your saved notes.
+Pennino is a handwriting-first notebook. Open the app to start writing on the launcher canvas, or browse and edit your saved notes.
 
 Use a pencil, pen, highlighter or eraser. Add typed text and checklists, and choose plain, lined, grid or dotted paper. Pin a note preview to a resizable Android home screen widget. Tap the widget to open the writing canvas.
 

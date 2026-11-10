@@ -1,4 +1,4 @@
-package com.hyydra.inknote
+package com.hyydra.pennino
 
 import android.app.Activity
 import android.content.Context
@@ -18,27 +18,27 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "inknote/widget")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pennino/widget")
             .setMethodCallHandler { call, result ->
                 if (call.method != "setNote") {
                     result.notImplemented()
                     return@setMethodCallHandler
                 }
                 try {
-                    val title = call.argument<String>("title") ?: "InkNote"
+                    val title = call.argument<String>("title") ?: "Pennino"
                     val base64 = call.argument<String>("png") ?: ""
-                    File(filesDir, "inknote_widget.png")
+                    File(filesDir, "pennino_widget.png")
                         .writeBytes(Base64.decode(base64, Base64.DEFAULT))
-                    getSharedPreferences("inknote_widget", Context.MODE_PRIVATE)
+                    getSharedPreferences("pennino_widget", Context.MODE_PRIVATE)
                         .edit().putString("title", title).apply()
-                    InkNoteWidget.updateAll(this)
+                    PenninoWidget.updateAll(this)
                     result.success(null)
                 } catch (error: Exception) {
                     result.error("widget", error.message, null)
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "inknote/sync")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pennino/sync")
             .setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
@@ -57,7 +57,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "inknote/update")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pennino/update")
             .setMethodCallHandler { call, result ->
                 if (call.method != "install") {
                     result.notImplemented()
@@ -82,7 +82,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun folderUri(): Uri? =
-        getSharedPreferences("inknote_sync", Context.MODE_PRIVATE)
+        getSharedPreferences("pennino_sync", Context.MODE_PRIVATE)
             .getString("folder_uri", null)?.let(Uri::parse)
 
     private fun hasFolderAccess(): Boolean {
@@ -121,7 +121,7 @@ class MainActivity : FlutterActivity() {
         val flags = (data?.flags ?: 0) and
             (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         contentResolver.takePersistableUriPermission(uri, flags)
-        getSharedPreferences("inknote_sync", Context.MODE_PRIVATE)
+        getSharedPreferences("pennino_sync", Context.MODE_PRIVATE)
             .edit().putString("folder_uri", uri.toString()).apply()
         result?.success(true)
     }

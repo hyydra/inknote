@@ -1,20 +1,20 @@
-# InkNote
+# Pennino
 
 Handwriting-first, local-first notes for Android and Windows.
 
 [![Latest release](https://img.shields.io/github/v/release/hyydra/pennino)](https://github.com/hyydra/pennino/releases/latest)
-[![Build InkNote](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml)
+[![Build Pennino](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-InkNote is a lightweight handwritten-notes application with a zoomable canvas, multiple typed-text blocks, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
+Pennino is a lightweight handwritten-notes application with a zoomable canvas, multiple typed-text blocks, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
 
 Android and Windows are supported release platforms. Linux support is experimental and verified by continuous integration, but no packaged Linux download is published yet.
 
 ## Download
 
-- [Windows installer](https://github.com/hyydra/pennino/releases/latest/download/InkNote-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
-- [Windows portable ZIP](https://github.com/hyydra/pennino/releases/latest/download/InkNote-Windows.zip) — extract and run without installation.
-- [Android APK](https://github.com/hyydra/pennino/releases/latest/download/InkNote-Android.apk) — universal APK for compatible phones and tablets.
+- [Windows installer](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
+- [Windows portable ZIP](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows.zip) — extract and run without installation.
+- [Android APK](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Android.apk) — universal APK for compatible phones and tablets.
 - [All releases and release notes](https://github.com/hyydra/pennino/releases)
 
 Windows may show a SmartScreen warning because the installer is not yet code-signed.
@@ -47,19 +47,19 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 
 The repository contains the Android and Windows platform projects, native widget integration and manifests. Linux is generated in CI and can be generated locally with `flutter create --platforms=linux .`. Do not recreate the Android or Windows projects during normal setup.
 
-To show a note on the Android home screen: open the note, choose **Update home widget**, then add the InkNote widget from the launcher. The resizable widget works on compatible Android phones and tablets and opens the writable launcher canvas when tapped.
+To show a note on the Android home screen: open the note, choose **Update home widget**, then add the Pennino widget from the launcher. The resizable widget works on compatible Android phones and tablets and opens the writable launcher canvas when tapped.
 
 ## GitHub releases
 
 Pushing a version tag such as `v0.4.1` builds and publishes three assets:
 
-- `InkNote-Android.apk`: a universal APK for compatible Android phones and tablets.
-- `InkNote-Windows.zip`: the portable Windows application.
-- `InkNote-Windows-Setup.exe`: a per-user Windows installer with Start menu and optional desktop shortcuts plus uninstall support.
+- `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
+- `Pennino-Windows.zip`: the portable Windows application.
+- `Pennino-Windows-Setup.exe`: a per-user Windows installer with Start menu and optional desktop shortcuts plus uninstall support.
 
 Android releases require the four repository secrets documented in the release workflow: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Keep the original keystore backed up permanently; Android updates must use the same signing key.
 
 ## Tech
 Flutter/Dart UI, Kotlin native Android widget (RemoteViews), JSON files, `path_provider`, `uuid`.
 
-Android application ID for Play testing: `com.hyydra.inknote`.
+Android application ID for Play testing: `com.hyydra.pennino`.

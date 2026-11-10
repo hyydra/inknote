@@ -2,9 +2,9 @@
   #define MyAppVersion "0.0.0"
 #endif
 
-#define MyAppName "InkNote"
+#define MyAppName "Pennino"
 #define MyAppPublisher "hyydra"
-#define MyAppExeName "inknote.exe"
+#define MyAppExeName "pennino.exe"
 #define MyBuildDir "..\build\windows\x64\runner\Release"
 
 [Setup]
@@ -21,7 +21,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\artifacts
-OutputBaseFilename=InkNote-Windows-Setup
+OutputBaseFilename=Pennino-Windows-Setup
 SetupIconFile=..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
