@@ -18,20 +18,22 @@ Note noteWithStroke() => Note(
     );
 
 void main() {
-  testWidgets('a stationary tap selects an ink stroke', (tester) async {
+  testWidgets('a stationary tap creates an undoable ink point',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(home: EditorPage(note: noteWithStroke())),
     );
 
-    await tester.tap(find.text('Select'));
-    await tester.pump();
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
     await tester.pump();
 
-    expect(find.text('Delete selection'), findsOneWidget);
+    final undo = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.undo),
+    );
+    expect(undo.onPressed, isNotNull);
   });
 
   testWidgets('the editor fits a narrow Android phone viewport',
