@@ -28,6 +28,21 @@ class UpdateService {
   static const _channel = MethodChannel('notes/update');
   static bool _checked = false;
 
+  static Map<String, dynamic>? selectAsset(
+    List<Map<String, dynamic>> assets, {
+    required bool windows,
+  }) {
+    final expectedName =
+        windows ? 'Pennino-Windows-Setup.exe' : 'Pennino-Android.apk';
+    for (final asset in assets) {
+      if ((asset['name'] as String? ?? '').toLowerCase() ==
+          expectedName.toLowerCase()) {
+        return asset;
+      }
+    }
+    return null;
+  }
+
   static List<int> _parts(String value) => value
       .replaceFirst(RegExp(r'^[vV]'), '')
       .split('.')
@@ -61,13 +76,10 @@ class UpdateService {
       final version =
           (release['tag_name'] as String? ?? '').replaceFirst('v', '');
       if (!_isNewer(version, appVersion)) return null;
-      final suffix = Platform.isAndroid ? '.apk' : '.zip';
       final assets =
           (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
-      final asset = assets.where((item) =>
-          (item['name'] as String? ?? '').toLowerCase().endsWith(suffix));
-      if (asset.isEmpty) return null;
-      final selected = asset.first;
+      final selected = selectAsset(assets, windows: Platform.isWindows);
+      if (selected == null) return null;
       return UpdateInfo(version, selected['browser_download_url'] as String,
           selected['name'] as String);
     } finally {
@@ -79,9 +91,20 @@ class UpdateService {
       {bool automatic = false}) async {
     if (automatic && _checked) return;
     _checked = true;
-    final update = await check();
+    UpdateInfo? update;
+    try {
+      update = await check();
+    } catch (error) {
+      if (!automatic && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update check failed: $error')),
+        );
+      }
+      return;
+    }
     if (!context.mounted) return;
-    if (update == null) {
+    final availableUpdate = update;
+    if (availableUpdate == null) {
       if (!automatic) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Pennino is up to date.')));
@@ -93,7 +116,7 @@ class UpdateService {
         builder: (context) => AlertDialog(
               title: const Text('Pennino update available'),
               content: Text(
-                  'Version ${update.version} is available. Download and install it now?'),
+                  'Version ${availableUpdate.version} is available. Download and install it now?'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -108,39 +131,20 @@ class UpdateService {
         .showSnackBar(const SnackBar(content: Text('Downloading update…')));
     final client = HttpClient();
     try {
-      final request = await client.getUrl(Uri.parse(update.downloadUrl));
+      final request =
+          await client.getUrl(Uri.parse(availableUpdate.downloadUrl));
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('Download failed (${response.statusCode})');
       }
       final file = File(
-          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}${update.fileName}');
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}${availableUpdate.fileName}');
       final sink = file.openWrite();
       await response.pipe(sink);
       if (Platform.isAndroid) {
         await _channel.invokeMethod('install', {'path': file.path});
       } else {
-        final app = Platform.resolvedExecutable;
-        final installDir = File(app).parent.path;
-        String quoted(String value) => value.replaceAll("'", "''");
-        final script = File('${file.path}.ps1');
-        await script.writeAsString('''
-param([int]\$AppPid)
-Wait-Process -Id \$AppPid -ErrorAction SilentlyContinue
-Expand-Archive -LiteralPath '${quoted(file.path)}' -DestinationPath '${quoted(installDir)}' -Force
-Start-Process -FilePath '${quoted(app)}'
-Remove-Item -LiteralPath \$PSCommandPath -Force
-''');
-        await Process.start(
-            'powershell',
-            [
-              '-NoProfile',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              script.path,
-              pid.toString()
-            ],
+        await Process.start(file.path, const [],
             mode: ProcessStartMode.detached);
         exit(0);
       }

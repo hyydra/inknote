@@ -31,7 +31,7 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 - A bottom drawing toolbar on Android, keeping tools within thumb reach while leaving the canvas visible.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
-- Automatic update checks against GitHub Releases. Windows also displays the active update status and current version in the drawing toolbar, where an update check can be started manually. Android downloads the universal APK and opens the system installer; Windows replaces the portable app after the user accepts the update.
+- Automatic update checks run on every application start. When a newer release is available, Windows displays a prompt, downloads `Pennino-Windows-Setup.exe` and launches the installer after the user accepts; the drawing toolbar also shows the current version and offers a manual check. Android downloads the universal APK and opens the system installer.
 
 ## Requirements
 - Flutter stable SDK and Android Studio / Android SDK for Android builds.
@@ -51,7 +51,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.2` builds and publishes three assets:
+Pushing a version tag such as `v0.4.3` builds and publishes three assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.
