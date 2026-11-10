@@ -42,7 +42,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
-                        "hasFolder" -> result.success(folderUri() != null)
+                        "hasFolder" -> result.success(hasFolderAccess())
                         "chooseFolder" -> chooseFolder(result)
                         "readFolder" -> result.success(readFolder())
                         "writeFolder" -> {
@@ -84,6 +84,13 @@ class MainActivity : FlutterActivity() {
     private fun folderUri(): Uri? =
         getSharedPreferences("inknote_sync", Context.MODE_PRIVATE)
             .getString("folder_uri", null)?.let(Uri::parse)
+
+    private fun hasFolderAccess(): Boolean {
+        val folder = folderUri() ?: return false
+        return contentResolver.persistedUriPermissions.any {
+            it.uri == folder && it.isReadPermission && it.isWritePermission
+        }
+    }
 
     private fun chooseFolder(result: MethodChannel.Result) {
         if (folderResult != null) {

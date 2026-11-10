@@ -797,6 +797,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             widget.note.updated = syncedCurrent.updated;
             widget.note.strokes = syncedCurrent.strokes;
             widget.note.tasks = syncedCurrent.tasks;
+            widget.note.backgroundColor = syncedCurrent.backgroundColor;
+            widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
             selectedStrokes.clear();
             lastSelectionViewportPoint = null;
             selectionMoved = false;
