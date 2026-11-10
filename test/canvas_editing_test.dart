@@ -102,6 +102,24 @@ void main() {
   );
   print('PASS selected strokes move consistently at different zooms');
 
+  final invalidSelection = [stroke(1, 1, 2, 2)];
+  expectEqual(
+    translateSelectedFromViewportDelta(
+      invalidSelection,
+      {4},
+      const InkPoint(20, 20),
+      const CanvasTransform(scale: 1),
+    ),
+    false,
+    'invalid selection does not report a successful edit',
+  );
+  expectClose(
+    invalidSelection.single.points.first.x,
+    1,
+    'invalid selection leaves strokes unchanged',
+  );
+  print('PASS invalid selection does not create a false edit');
+
   final bounds = strokeBoundsForSelection(
     [stroke(5, 15, 35, 45), stroke(100, 110, 120, 130)],
     {0, 1},
@@ -111,4 +129,38 @@ void main() {
   expectClose(bounds.right, 120, 'selection bounds include right edge');
   expectClose(bounds.bottom, 130, 'selection bounds include bottom edge');
   print('PASS selection bounds cover every selected stroke');
+
+  final history = StrokeHistory();
+  final edited = [stroke(10, 10, 20, 20), stroke(30, 30, 40, 40)];
+  history.record(edited);
+  translateSelectedFromViewportDelta(
+    edited,
+    {0},
+    const InkPoint(50, 0),
+    const CanvasTransform(scale: 1),
+  );
+  final beforeMove = history.undo(edited);
+  expectClose(
+    beforeMove!.first.points.first.x,
+    10,
+    'undo restores a moved stroke',
+  );
+  expectEqual(beforeMove.length, 2, 'undo preserves unrelated strokes');
+  final afterMove = history.redo(beforeMove);
+  expectClose(
+    afterMove!.first.points.first.x,
+    60,
+    'redo restores the stroke movement',
+  );
+
+  history.record(afterMove);
+  afterMove.removeAt(0);
+  final beforeDelete = history.undo(afterMove);
+  expectEqual(beforeDelete!.length, 2, 'undo restores a deleted selection');
+  expectClose(
+    beforeDelete.first.points.first.x,
+    60,
+    'restored selection keeps its moved position',
+  );
+  print('PASS undo and redo restore selection movement and deletion');
 }

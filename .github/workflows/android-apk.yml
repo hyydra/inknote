@@ -10,6 +10,7 @@ on:
       - 'android_widget/**'
       - 'lib/**'
       - 'test/**'
+      - 'widget_test/**'
       - 'pubspec.yaml'
 
 permissions:
@@ -29,6 +30,8 @@ jobs:
         with:
           flutter-version: '3.47.5'
           channel: stable
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
       - name: Generate Android and Linux projects
         run: |
           flutter create --no-pub --platforms=android,linux --org com.hyydra "$RUNNER_TEMP/inknote"
@@ -37,6 +40,8 @@ jobs:
           sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "27.0.12077973"/' "$project/android/app/build.gradle.kts"
           cp pubspec.yaml "$project/"
           cp -R lib/. "$project/lib/"
+          mkdir -p "$project/test"
+          cp widget_test/editor_gesture_test.dart "$project/test/"
           cp android_widget/kotlin/*.kt "$android/kotlin/com/hyydra/inknote/"
           cp -R android_widget/res/. "$android/res/"
           python3 - "$android/AndroidManifest.xml" <<'PY'
@@ -58,6 +63,7 @@ jobs:
           dart test/stroke_commit_test.dart
           cd "$RUNNER_TEMP/inknote"
           flutter pub get
+          flutter test test/editor_gesture_test.dart
           flutter build apk --debug
           flutter build linux --release
           cp build/app/outputs/flutter-apk/app-debug.apk "$RUNNER_TEMP/InkNote.apk"

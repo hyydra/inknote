@@ -36,6 +36,40 @@ class StrokeBounds {
   });
 }
 
+class StrokeHistory {
+  final int maxEntries;
+  final List<List<Stroke>> _undo = [];
+  final List<List<Stroke>> _redo = [];
+
+  StrokeHistory({this.maxEntries = 50});
+
+  bool get canUndo => _undo.isNotEmpty;
+  bool get canRedo => _redo.isNotEmpty;
+
+  void record(List<Stroke> strokes) {
+    _undo.add(_cloneStrokes(strokes));
+    if (_undo.length > maxEntries) _undo.removeAt(0);
+    _redo.clear();
+  }
+
+  List<Stroke>? undo(List<Stroke> current) {
+    if (_undo.isEmpty) return null;
+    _redo.add(_cloneStrokes(current));
+    return _undo.removeLast();
+  }
+
+  List<Stroke>? redo(List<Stroke> current) {
+    if (_redo.isEmpty) return null;
+    _undo.add(_cloneStrokes(current));
+    return _redo.removeLast();
+  }
+
+  void clear() {
+    _undo.clear();
+    _redo.clear();
+  }
+}
+
 int? hitTestStrokeAtViewport(
   List<Stroke> strokes,
   InkPoint viewportPoint,
@@ -64,6 +98,7 @@ bool translateSelectedFromViewportDelta(
     return false;
   }
   final sceneDelta = transform.sceneDeltaFromViewport(viewportDelta);
+  var changed = false;
   for (final index in selectedIndices) {
     if (index < 0 || index >= strokes.length) continue;
     final stroke = strokes[index];
@@ -78,8 +113,9 @@ bool translateSelectedFromViewportDelta(
       highlight: stroke.highlight,
       opacity: stroke.opacity,
     );
+    changed = true;
   }
-  return true;
+  return changed;
 }
 
 StrokeBounds? strokeBoundsForSelection(
@@ -137,3 +173,17 @@ double _distanceToSegment(InkPoint point, InkPoint start, InkPoint end) {
     InkPoint(start.x + clamped * dx, start.y + clamped * dy),
   );
 }
+
+List<Stroke> _cloneStrokes(List<Stroke> strokes) => strokes
+    .map(
+      (stroke) => Stroke(
+        points: stroke.points
+            .map((point) => InkPoint(point.x, point.y))
+            .toList(),
+        color: stroke.color,
+        width: stroke.width,
+        highlight: stroke.highlight,
+        opacity: stroke.opacity,
+      ),
+    )
+    .toList();

@@ -207,8 +207,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   final Set<int> selectedStrokes = {};
   Offset? lastSelectionViewportPoint;
   bool selectionMoved = false;
+  bool gestureHistoryRecorded = false;
   late final AutosaveController autosave;
-  final List<Stroke> undone = [];
+  final StrokeHistory strokeHistory = StrokeHistory();
   final store = NoteStore(directoryProvider: _noteDirectory);
 
   @override
@@ -245,6 +246,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _finalizeActiveStroke();
+      lastSelectionViewportPoint = null;
+      selectionMoved = false;
+      gestureHistoryRecorded = false;
       unawaited(autosave.saveNow());
     }
   }
@@ -267,6 +271,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void begin(Offset viewportPoint) {
     if (tool == DrawTool.hand) return;
+    gestureHistoryRecorded = false;
     if (tool == DrawTool.select) {
       final selected = hitTestStrokeAtViewport(
         widget.note.strokes,
@@ -288,6 +293,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     final scenePoint = _scenePoint(viewportPoint);
+    strokeHistory.record(widget.note.strokes);
+    gestureHistoryRecorded = true;
     setState(() {
       selectedStrokes.clear();
       active = Stroke(
@@ -309,6 +316,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (tool == DrawTool.select) {
       final previous = lastSelectionViewportPoint;
       if (previous == null || selectedStrokes.isEmpty) return;
+      if (!gestureHistoryRecorded) {
+        strokeHistory.record(widget.note.strokes);
+        gestureHistoryRecorded = true;
+      }
       final moved = translateSelectedFromViewportDelta(
         widget.note.strokes,
         selectedStrokes,
@@ -319,6 +330,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         canvasTransform,
       );
       if (moved) {
+        if (!selectionMoved) _markChanged();
         setState(() {
           lastSelectionViewportPoint = viewportPoint;
           selectionMoved = true;
@@ -337,13 +349,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void end() {
     if (tool == DrawTool.select) {
-      final moved = selectionMoved;
       setState(() {
         lastSelectionViewportPoint = null;
         selectionMoved = false;
-        if (moved) undone.clear();
+        gestureHistoryRecorded = false;
       });
-      if (moved) _markChanged();
       return;
     }
     _finalizeActiveStroke();
@@ -353,7 +363,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (!commitActiveStroke(widget.note.strokes, active)) return;
     setState(() {
       active = null;
-      undone.clear();
+      gestureHistoryRecorded = false;
     });
     _markChanged();
   }
@@ -365,10 +375,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       canvasTransform,
     );
     if (index == null) return;
+    if (!gestureHistoryRecorded) {
+      strokeHistory.record(widget.note.strokes);
+      gestureHistoryRecorded = true;
+    }
     setState(() {
       widget.note.strokes.removeAt(index);
       selectedStrokes.clear();
-      undone.clear();
     });
     _markChanged();
   }
@@ -376,6 +389,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void deleteSelection() {
     if (selectedStrokes.isEmpty) return;
     final indices = selectedStrokes.toList()..sort((a, b) => b.compareTo(a));
+    strokeHistory.record(widget.note.strokes);
     setState(() {
       for (final index in indices) {
         if (index >= 0 && index < widget.note.strokes.length) {
@@ -383,7 +397,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         }
       }
       selectedStrokes.clear();
-      undone.clear();
     });
     _markChanged();
   }
@@ -645,6 +658,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           widget.note.updated = syncedCurrent.updated;
           widget.note.strokes = syncedCurrent.strokes;
           widget.note.tasks = syncedCurrent.tasks;
+          selectedStrokes.clear();
+          lastSelectionViewportPoint = null;
+          selectionMoved = false;
+          gestureHistoryRecorded = false;
+          strokeHistory.clear();
           titleController.text = syncedCurrent.title;
           textController.text = syncedCurrent.text;
         });
@@ -733,13 +751,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               actions: [
                 IconButton(
                     tooltip: 'Undo',
-                    onPressed: widget.note.strokes.isEmpty
+                    onPressed: !strokeHistory.canUndo
                         ? null
                 : () {
+                    final restored =
+                        strokeHistory.undo(widget.note.strokes);
+                    if (restored == null) return;
                     setState(
                       () {
                         selectedStrokes.clear();
-                        undone.add(widget.note.strokes.removeLast());
+                        widget.note.strokes = restored;
                       },
                     );
                     _markChanged();
@@ -748,13 +769,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           ),
                 IconButton(
                     tooltip: 'Redo',
-                    onPressed: undone.isEmpty
+                    onPressed: !strokeHistory.canRedo
                         ? null
                 : () {
+                    final restored =
+                        strokeHistory.redo(widget.note.strokes);
+                    if (restored == null) return;
                     setState(
                       () {
                         selectedStrokes.clear();
-                        widget.note.strokes.add(undone.removeLast());
+                        widget.note.strokes = restored;
                       },
                     );
                     _markChanged();
@@ -982,7 +1006,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       return ClipRect(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onPanStart: isHandTool
+                          onPanDown: isHandTool
                               ? null
                               : (details) => begin(details.localPosition),
                           onPanUpdate: isHandTool
@@ -990,6 +1014,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                               : (details) => move(details.localPosition),
                           onPanEnd: isHandTool ? null : (_) => end(),
                           onPanCancel: isHandTool ? null : end,
+                          onTapUp: isHandTool ? null : (_) => end(),
                           child: IgnorePointer(
                             ignoring: !isHandTool,
                             child: InteractiveViewer(
