@@ -33,6 +33,21 @@ Future<void> main() async {
 
   print('PASS legacy JSON migrates to the current format');
 
+  final blocks = Note(
+    id: 'blocks-note',
+    title: 'Separate blocks',
+    textBlocks: const ['First block', 'Second block'],
+    updated: DateTime.utc(2026, 11, 10),
+    strokes: [],
+  );
+  final blocksRoundTrip = Note.fromJson(blocks.toJson());
+  expectEqual(
+    blocksRoundTrip.textBlocks.join('|'),
+    'First block|Second block',
+    'multiple text blocks survive serialization',
+  );
+  print('PASS multiple text blocks survive serialization');
+
   var rejectedFutureVersion = false;
   try {
     Note.fromJson({

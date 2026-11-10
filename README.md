@@ -1,17 +1,36 @@
-# InkNote — handwritten notes for Android, Linux and Windows
+# InkNote
 
-**Status:** working MVP for compatible Android phones, Android tablets, Linux and Windows.
+Handwriting-first, local-first notes for Android and Windows.
 
-## Included
+[![Latest release](https://img.shields.io/github/v/release/hyydra/inknote)](https://github.com/hyydra/inknote/releases/latest)
+[![Build InkNote](https://github.com/hyydra/inknote/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/inknote/actions/workflows/android-apk.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+InkNote is a lightweight handwritten-notes application with a zoomable canvas, multiple typed-text blocks, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
+
+Android and Windows are supported release platforms. Linux support is experimental and verified by continuous integration, but no packaged Linux download is published yet.
+
+## Download
+
+- [Windows installer](https://github.com/hyydra/inknote/releases/latest/download/InkNote-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
+- [Windows portable ZIP](https://github.com/hyydra/inknote/releases/latest/download/InkNote-Windows.zip) — extract and run without installation.
+- [Android APK](https://github.com/hyydra/inknote/releases/latest/download/InkNote-Android.apk) — universal APK for compatible phones and tablets.
+- [All releases and release notes](https://github.com/hyydra/inknote/releases)
+
+Windows may show a SmartScreen warning because the installer is not yet code-signed.
+
+## Highlights
 - Multiple local notes with typed text, checklists and editable ink strokes. Drawing tools include pencil, pen, highlighter, whole-stroke eraser and undo/redo.
 - A large canvas with a Hand tool for pan and zoom, plus stroke selection, movement and deletion at any zoom level.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
-- On Android, the cloud-sync button lets the user select a Google Drive folder through the system folder picker. Sync is two-way and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
+- On Android, the cloud-sync button selects a Google Drive folder through the system folder picker. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
 - Versioned JSON persistence in the application documents directory, with atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background autosave for every editor change, with Saved, Unsaved, Saving and Save failed states.
+- Multiple independently editable, transparent text blocks in a scrollable panel.
+- A bottom drawing toolbar on Android, keeping tools within thumb reach while leaving the canvas visible.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
-- Responsive Flutter UI shared by Android, Linux and Windows.
+- Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
 - Automatic update checks against GitHub Releases. Android downloads the universal APK and opens the system installer; Windows replaces the portable app after the user accepts the update.
 
 ## Requirements
@@ -32,7 +51,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.0` builds and publishes three assets:
+Pushing a version tag such as `v0.4.1` builds and publishes three assets:
 
 - `InkNote-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `InkNote-Windows.zip`: the portable Windows application.

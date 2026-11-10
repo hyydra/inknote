@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -15,7 +16,7 @@ import 'note_data.dart';
 import 'note_store.dart';
 
 const inkNoteVersion =
-    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.0');
+    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.1');
 
 class UpdateInfo {
   final String version;
@@ -194,6 +195,9 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(UpdateService.prompt(context, automatic: true));
+    });
   }
 
   Future<void> _load() async {
@@ -333,7 +337,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('inknote/widget');
   static const syncChannel = MethodChannel('inknote/sync');
   late final TextEditingController titleController;
-  late final TextEditingController textController;
+  final List<TextEditingController> textControllers = [];
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
@@ -364,9 +368,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
-    textController = TextEditingController(text: widget.note.text);
     taskController = TextEditingController();
-    textController.addListener(_markChanged);
+    _replaceTextControllers(widget.note.textBlocks);
   }
 
   @override
@@ -374,7 +377,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     autosave.dispose();
     titleController.dispose();
-    textController.dispose();
+    for (final controller in textControllers) {
+      controller.dispose();
+    }
     taskController.dispose();
     transformationController.dispose();
     super.dispose();
@@ -395,6 +400,36 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _markChanged() {
     if (!applyingExternalChange) autosave.markChanged();
+  }
+
+  TextEditingController _textController(String text) {
+    final controller = TextEditingController(text: text);
+    controller.addListener(_markChanged);
+    return controller;
+  }
+
+  void _replaceTextControllers(Iterable<String> blocks) {
+    for (final controller in textControllers) {
+      controller.dispose();
+    }
+    textControllers
+      ..clear()
+      ..addAll(blocks.map(_textController));
+  }
+
+  void addTextBlock() {
+    setState(() {
+      showText = true;
+      textControllers.add(_textController(''));
+    });
+    _markChanged();
+  }
+
+  void removeTextBlock(int index) {
+    setState(() {
+      textControllers.removeAt(index).dispose();
+    });
+    _markChanged();
   }
 
   CanvasTransform get canvasTransform {
@@ -544,7 +579,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
-    widget.note.text = textController.text;
+    widget.note.textBlocks =
+        textControllers.map((controller) => controller.text).toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
   }
@@ -738,12 +774,51 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     _markChanged();
   }
 
-  Future<void> syncDrive() async {
-    if (!Platform.isAndroid) {
+  Future<Directory?> _windowsSyncFolder({bool choose = false}) async {
+    final marker = File('${(await _noteDirectory()).path}/.sync-folder');
+    if (!choose && await marker.exists()) {
+      final savedPath = (await marker.readAsString()).trim();
+      if (savedPath.isNotEmpty) {
+        final saved = Directory(savedPath);
+        if (await saved.exists()) return saved;
+      }
+    }
+    final selected = await getDirectoryPath(
+      confirmButtonText: 'Use this folder',
+    );
+    if (selected == null) return null;
+    final directory = Directory(selected);
+    await marker.writeAsString(directory.path, flush: true);
+    return directory;
+  }
+
+  Future<Map<String, String>> _readWindowsSyncFolder(
+      Directory directory) async {
+    final files = <String, String>{};
+    await for (final entry in directory.list()) {
+      if (entry is File && entry.path.toLowerCase().endsWith('.json')) {
+        files[entry.uri.pathSegments.last] = await entry.readAsString();
+      }
+    }
+    return files;
+  }
+
+  Future<void> _writeWindowsSyncFolder(
+    Directory directory,
+    Map<String, String> files,
+  ) async {
+    for (final entry in files.entries) {
+      await File('${directory.path}${Platform.pathSeparator}${entry.key}')
+          .writeAsString(entry.value, flush: true);
+    }
+  }
+
+  Future<void> syncDrive({bool chooseFolder = false}) async {
+    if (!Platform.isAndroid && !Platform.isWindows) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Google Drive folder sync is Android-only for now'),
+            content: Text('Folder sync is available on Android and Windows'),
           ),
         );
       }
@@ -761,17 +836,24 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     try {
-      var hasFolder =
-          await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
-      if (!hasFolder) {
-        hasFolder =
-            await syncChannel.invokeMethod<bool>('chooseFolder') ?? false;
+      Directory? windowsFolder;
+      Map<String, String> remoteRaw;
+      if (Platform.isAndroid) {
+        var hasFolder =
+            await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
+        if (!hasFolder) {
+          hasFolder =
+              await syncChannel.invokeMethod<bool>('chooseFolder') ?? false;
+        }
+        if (!hasFolder) return;
+        remoteRaw =
+            await syncChannel.invokeMapMethod<String, String>('readFolder') ??
+                <String, String>{};
+      } else {
+        windowsFolder = await _windowsSyncFolder(choose: chooseFolder);
+        if (windowsFolder == null) return;
+        remoteRaw = await _readWindowsSyncFolder(windowsFolder);
       }
-      if (!hasFolder) return;
-
-      final remoteRaw =
-          await syncChannel.invokeMapMethod<String, String>('readFolder') ??
-              <String, String>{};
       final merged = {for (final item in await store.load()) item.id: item};
       for (final content in remoteRaw.values) {
         try {
@@ -793,7 +875,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         try {
           setState(() {
             widget.note.title = syncedCurrent.title;
-            widget.note.text = syncedCurrent.text;
+            widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
             widget.note.updated = syncedCurrent.updated;
             widget.note.strokes = syncedCurrent.strokes;
             widget.note.tasks = syncedCurrent.tasks;
@@ -805,7 +887,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             gestureHistoryRecorded = false;
             strokeHistory.clear();
             titleController.text = syncedCurrent.title;
-            textController.text = syncedCurrent.text;
+            _replaceTextControllers(syncedCurrent.textBlocks);
           });
         } finally {
           applyingExternalChange = false;
@@ -815,7 +897,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         for (final item in merged.values)
           '${item.id}.json': jsonEncode(item.toJson()),
       };
-      await syncChannel.invokeMethod<void>('writeFolder', {'files': files});
+      if (Platform.isAndroid) {
+        await syncChannel.invokeMethod<void>('writeFolder', {'files': files});
+      } else {
+        await _writeWindowsSyncFolder(windowsFolder!, files);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -823,14 +909,79 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           ),
         );
       }
-    } on PlatformException catch (error) {
+    } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Drive sync error: ${error.message}')),
+          SnackBar(content: Text('Drive sync error: $error')),
         );
       }
     }
   }
+
+  Widget _androidDrawingToolbar() => SizedBox(
+        key: const Key('android-drawing-toolbar'),
+        height: 64,
+        child: Material(
+          elevation: 6,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            children: [
+              for (final entry in [
+                (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+                (DrawTool.select, Icons.select_all, 'Select'),
+                (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
+                (DrawTool.pen, Icons.edit, 'Pen'),
+                (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
+                (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+              ])
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: ChoiceChip(
+                    label: Text(entry.$3),
+                    avatar: Icon(entry.$2, size: 18),
+                    selected: tool == entry.$1,
+                    onSelected: (_) => setState(() {
+                      tool = entry.$1;
+                      if (tool != DrawTool.select) selectedStrokes.clear();
+                    }),
+                  ),
+                ),
+              if (selectedStrokes.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: ActionChip(
+                    avatar: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Delete selection'),
+                    onPressed: deleteSelection,
+                  ),
+                ),
+              for (final color in [
+                Colors.black,
+                Colors.blue,
+                Colors.red,
+                Colors.green,
+                Colors.orange,
+                Colors.purple,
+              ])
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: InkWell(
+                    onTap: () => setState(() => ink = color),
+                    child: CircleAvatar(
+                      radius: 15,
+                      backgroundColor: color,
+                      child: ink == color
+                          ? const Icon(Icons.check,
+                              size: 17, color: Colors.white)
+                          : null,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) => PopScope(
@@ -958,6 +1109,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     case 'sync':
                       syncDrive();
                       return;
+                    case 'sync-folder':
+                      syncDrive(chooseFolder: true);
+                      return;
+                    case 'update':
+                      UpdateService.prompt(context);
+                      return;
                   }
                 },
                 itemBuilder: (_) => [
@@ -998,88 +1155,160 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       title: Text('Sync Drive folder'),
                     ),
                   ),
+                  if (Platform.isWindows)
+                    const PopupMenuItem(
+                      value: 'sync-folder',
+                      child: ListTile(
+                        leading: Icon(Icons.folder_open_outlined),
+                        title: Text('Choose Drive folder'),
+                      ),
+                    ),
+                  if (Platform.isAndroid || Platform.isWindows)
+                    const PopupMenuItem(
+                      value: 'update',
+                      child: ListTile(
+                        leading: Icon(Icons.system_update_outlined),
+                        title: Text('Check for updates'),
+                      ),
+                    ),
                 ],
               ),
             ],
           ),
           body: Column(
             children: [
-              SizedBox(
-                height: 58,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  children: [
-                    for (final entry in [
-                      (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
-                      (DrawTool.select, Icons.select_all, 'Select'),
-                      (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-                      (DrawTool.pen, Icons.edit, 'Pen'),
-                      (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
-                      (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
-                    ])
-                      Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: ChoiceChip(
-                          label: Text(entry.$3),
-                          avatar: Icon(entry.$2, size: 18),
-                          selected: tool == entry.$1,
-                          onSelected: (_) => setState(() {
-                            tool = entry.$1;
-                            if (tool != DrawTool.select)
-                              selectedStrokes.clear();
-                          }),
+              if (Theme.of(context).platform != TargetPlatform.android)
+                SizedBox(
+                  height: 58,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    children: [
+                      for (final entry in [
+                        (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+                        (DrawTool.select, Icons.select_all, 'Select'),
+                        (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
+                        (DrawTool.pen, Icons.edit, 'Pen'),
+                        (
+                          DrawTool.highlighter,
+                          Icons.border_color,
+                          'Highlighter'
                         ),
-                      ),
-                    if (selectedStrokes.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: ActionChip(
-                          avatar: const Icon(Icons.delete_outline, size: 18),
-                          label: const Text('Delete selection'),
-                          onPressed: deleteSelection,
-                        ),
-                      ),
-                    for (final c in [
-                      Colors.black,
-                      Colors.blue,
-                      Colors.red,
-                      Colors.green,
-                      Colors.orange,
-                      Colors.purple,
-                    ])
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: InkWell(
-                          onTap: () => setState(() => ink = c),
-                          child: CircleAvatar(
-                            radius: 15,
-                            backgroundColor: c,
-                            child: ink == c
-                                ? const Icon(
-                                    Icons.check,
-                                    size: 17,
-                                    color: Colors.white,
-                                  )
-                                : null,
+                        (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: ChoiceChip(
+                            label: Text(entry.$3),
+                            avatar: Icon(entry.$2, size: 18),
+                            selected: tool == entry.$1,
+                            onSelected: (_) => setState(() {
+                              tool = entry.$1;
+                              if (tool != DrawTool.select)
+                                selectedStrokes.clear();
+                            }),
                           ),
                         ),
-                      ),
-                  ],
+                      if (selectedStrokes.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: ActionChip(
+                            avatar: const Icon(Icons.delete_outline, size: 18),
+                            label: const Text('Delete selection'),
+                            onPressed: deleteSelection,
+                          ),
+                        ),
+                      for (final c in [
+                        Colors.black,
+                        Colors.blue,
+                        Colors.red,
+                        Colors.green,
+                        Colors.orange,
+                        Colors.purple,
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: InkWell(
+                            onTap: () => setState(() => ink = c),
+                            child: CircleAvatar(
+                              radius: 15,
+                              backgroundColor: c,
+                              child: ink == c
+                                  ? const Icon(
+                                      Icons.check,
+                                      size: 17,
+                                      color: Colors.white,
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
               if (showText)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                  child: TextField(
-                    controller: textController,
-                    minLines: 2,
-                    maxLines: 5,
-                    keyboardType: TextInputType.multiline,
-                    decoration: const InputDecoration(
-                      hintText: 'Type text here…',
-                      border: OutlineInputBorder(),
-                    ),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 230),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 4, 2),
+                        child: Row(
+                          children: [
+                            const Expanded(child: Text('Text blocks')),
+                            IconButton(
+                              tooltip: 'Add text block',
+                              onPressed: addTextBlock,
+                              icon: const Icon(Icons.add),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (textControllers.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: OutlinedButton.icon(
+                            onPressed: addTextBlock,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add text block'),
+                          ),
+                        )
+                      else
+                        Flexible(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 4, 8),
+                            itemCount: textControllers.length,
+                            itemBuilder: (context, index) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: textControllers[index],
+                                      minLines: 2,
+                                      maxLines: null,
+                                      keyboardType: TextInputType.multiline,
+                                      decoration: InputDecoration(
+                                        hintText: 'Text block ${index + 1}',
+                                        border: const OutlineInputBorder(),
+                                        filled: true,
+                                        fillColor: Colors.transparent,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Delete text block',
+                                    onPressed: () => removeTextBlock(index),
+                                    icon: const Icon(Icons.close),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               if (showTasks)
@@ -1197,6 +1426,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   },
                 ),
               ),
+              if (Theme.of(context).platform == TargetPlatform.android)
+                SafeArea(top: false, child: _androidDrawingToolbar()),
             ],
           ),
         ),

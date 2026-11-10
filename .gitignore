@@ -2,6 +2,7 @@
 .flutter-plugins-dependencies
 .idea/
 .metadata
+android/.kotlin/
 *.iml
 artifacts/
 build/
