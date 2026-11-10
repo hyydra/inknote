@@ -15,7 +15,7 @@ import 'note_data.dart';
 import 'note_store.dart';
 
 const inkNoteVersion =
-    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.3.0');
+    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.0');
 
 class UpdateInfo {
   final String version;

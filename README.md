@@ -32,10 +32,11 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.3.0` builds and publishes two assets:
+Pushing a version tag such as `v0.4.0` builds and publishes three assets:
 
 - `InkNote-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `InkNote-Windows.zip`: the portable Windows application.
+- `InkNote-Windows-Setup.exe`: a per-user Windows installer with Start menu and optional desktop shortcuts plus uninstall support.
 
 Android releases require the four repository secrets documented in the release workflow: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Keep the original keystore backed up permanently; Android updates must use the same signing key.
 

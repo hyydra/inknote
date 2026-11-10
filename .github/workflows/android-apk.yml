@@ -61,3 +61,13 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: flutter build windows
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          $version = (Select-String '^version:\s*([0-9.]+)' pubspec.yaml).Matches.Groups[1].Value
+          & $iscc "/DMyAppVersion=$version" installer/inknote.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
