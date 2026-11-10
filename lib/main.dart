@@ -15,8 +15,7 @@ import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
 
-const inkNoteVersion =
-    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.2');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.3');
 
 class UpdateInfo {
   final String version;
@@ -26,7 +25,7 @@ class UpdateInfo {
 }
 
 class UpdateService {
-  static const _channel = MethodChannel('inknote/update');
+  static const _channel = MethodChannel('notes/update');
   static bool _checked = false;
 
   static List<int> _parts(String value) => value
@@ -54,14 +53,14 @@ class UpdateService {
           'https://api.github.com/repos/hyydra/pennino/releases/latest'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
-        ..set(HttpHeaders.userAgentHeader, 'Pennino/$inkNoteVersion');
+        ..set(HttpHeaders.userAgentHeader, 'Pennino/$appVersion');
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) return null;
       final release = jsonDecode(await response.transform(utf8.decoder).join())
           as Map<String, dynamic>;
       final version =
           (release['tag_name'] as String? ?? '').replaceFirst('v', '');
-      if (!_isNewer(version, inkNoteVersion)) return null;
+      if (!_isNewer(version, appVersion)) return null;
       final suffix = Platform.isAndroid ? '.apk' : '.zip';
       final assets =
           (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
@@ -126,8 +125,8 @@ class UpdateService {
         String quoted(String value) => value.replaceAll("'", "''");
         final script = File('${file.path}.ps1');
         await script.writeAsString('''
-param([int]\$InkNotePid)
-Wait-Process -Id \$InkNotePid -ErrorAction SilentlyContinue
+param([int]\$AppPid)
+Wait-Process -Id \$AppPid -ErrorAction SilentlyContinue
 Expand-Archive -LiteralPath '${quoted(file.path)}' -DestinationPath '${quoted(installDir)}' -Force
 Start-Process -FilePath '${quoted(app)}'
 Remove-Item -LiteralPath \$PSCommandPath -Force
@@ -158,11 +157,11 @@ Remove-Item -LiteralPath \$PSCommandPath -Force
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const InkNoteApp());
+  runApp(const NotesApp());
 }
 
-class InkNoteApp extends StatelessWidget {
-  const InkNoteApp({super.key});
+class NotesApp extends StatelessWidget {
+  const NotesApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -177,7 +176,7 @@ class InkNoteApp extends StatelessWidget {
 }
 
 Future<Directory> _noteDirectory() async =>
-    Directory('${(await getApplicationDocumentsDirectory()).path}/inknote');
+    Directory('${(await getApplicationDocumentsDirectory()).path}/notes');
 
 class LauncherCanvasPage extends StatefulWidget {
   const LauncherCanvasPage({super.key});
@@ -334,8 +333,8 @@ class EditorPage extends StatefulWidget {
 }
 
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
-  static const widgetChannel = MethodChannel('inknote/widget');
-  static const syncChannel = MethodChannel('inknote/sync');
+  static const widgetChannel = MethodChannel('notes/widget');
+  static const syncChannel = MethodChannel('notes/sync');
   late final TextEditingController titleController;
   final List<TextEditingController> textControllers = [];
   final List<TextBlockFormat> textFormats = [];
@@ -344,7 +343,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   final TransformationController transformationController =
       TransformationController();
   DrawTool tool = DrawTool.pen;
-  Color ink = Colors.blue.shade800;
+  Color strokeColor = Colors.blue.shade800;
   double width = 3;
   Stroke? active;
   bool showText = true;
@@ -565,8 +564,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  InkPoint _scenePoint(Offset viewportPoint) => canvasTransform
-      .sceneFromViewport(InkPoint(viewportPoint.dx, viewportPoint.dy));
+  CanvasPoint _scenePoint(Offset viewportPoint) => canvasTransform
+      .sceneFromViewport(CanvasPoint(viewportPoint.dx, viewportPoint.dy));
 
   void begin(Offset viewportPoint) {
     if (tool == DrawTool.hand) return;
@@ -574,7 +573,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (tool == DrawTool.select) {
       final selected = hitTestStrokeAtViewport(
         widget.note.strokes,
-        InkPoint(viewportPoint.dx, viewportPoint.dy),
+        CanvasPoint(viewportPoint.dx, viewportPoint.dy),
         canvasTransform,
       );
       setState(() {
@@ -597,7 +596,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       selectedStrokes.clear();
       active = Stroke(
         points: [scenePoint],
-        color: ink.toARGB32(),
+        color: strokeColor.toARGB32(),
         width: tool == DrawTool.highlighter
             ? 22
             : tool == DrawTool.pencil
@@ -621,7 +620,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       final moved = translateSelectedFromViewportDelta(
         widget.note.strokes,
         selectedStrokes,
-        InkPoint(
+        CanvasPoint(
           viewportPoint.dx - previous.dx,
           viewportPoint.dy - previous.dy,
         ),
@@ -669,7 +668,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void erase(Offset viewportPoint) {
     final index = hitTestStrokeAtViewport(
       widget.note.strokes,
-      InkPoint(viewportPoint.dx, viewportPoint.dy),
+      CanvasPoint(viewportPoint.dx, viewportPoint.dy),
       canvasTransform,
     );
     if (index == null) return;
@@ -741,7 +740,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(700, 420);
-    InkPainter(
+    StrokePainter(
       widget.note.strokes,
       null,
       background: Color(widget.note.backgroundColor),
@@ -1104,11 +1103,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: InkWell(
-                    onTap: () => setState(() => ink = color),
+                    onTap: () => setState(() => strokeColor = color),
                     child: CircleAvatar(
                       radius: 15,
                       backgroundColor: color,
-                      child: ink == color
+                      child: strokeColor == color
                           ? const Icon(Icons.check,
                               size: 17, color: Colors.white)
                           : null,
@@ -1443,7 +1442,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                               Icons.system_update_outlined,
                               size: 18,
                             ),
-                            label: Text('Auto updates · v$inkNoteVersion'),
+                            label: Text('Auto updates · v$appVersion'),
                             tooltip: 'Check for updates',
                             onPressed: () => UpdateService.prompt(context),
                           ),
@@ -1468,11 +1467,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: InkWell(
-                            onTap: () => setState(() => ink = c),
+                            onTap: () => setState(() => strokeColor = c),
                             child: CircleAvatar(
                               radius: 15,
                               backgroundColor: c,
-                              child: ink == c
+                              child: strokeColor == c
                                   ? const Icon(
                                       Icons.check,
                                       size: 17,
@@ -1652,7 +1651,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                               width: canvasWidth,
                               height: canvasHeight,
                               child: CustomPaint(
-                                painter: InkPainter(
+                                painter: StrokePainter(
                                   widget.note.strokes,
                                   active,
                                   selectedIndices: selectedStrokes,
@@ -1683,14 +1682,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       );
 }
 
-class InkPainter extends CustomPainter {
+class StrokePainter extends CustomPainter {
   final List<Stroke> strokes;
   final Stroke? active;
   final Color background;
   final PaperPattern pattern;
   final Set<int> selectedIndices;
   final double selectionScale;
-  InkPainter(
+  StrokePainter(
     this.strokes,
     this.active, {
     this.background = const Color(0xfffffdf7),
@@ -1768,5 +1767,5 @@ class InkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant InkPainter old) => true;
+  bool shouldRepaint(covariant StrokePainter old) => true;
 }

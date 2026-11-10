@@ -3,7 +3,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:inknote/autosave_controller.dart';
+import 'package:notes_app/autosave_controller.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {

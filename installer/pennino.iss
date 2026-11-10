@@ -4,7 +4,7 @@
 
 #define MyAppName "Pennino"
 #define MyAppPublisher "hyydra"
-#define MyAppExeName "inknote.exe"
+#define MyAppExeName "pennino.exe"
 #define MyBuildDir "..\build\windows\x64\runner\Release"
 
 [Setup]

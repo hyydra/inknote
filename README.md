@@ -20,7 +20,7 @@ Android and Windows are supported release platforms. Linux support is experiment
 Windows may show a SmartScreen warning because the installer is not yet code-signed.
 
 ## Highlights
-- Multiple local notes with typed text, checklists and editable ink strokes. Drawing tools include pencil, pen, highlighter, whole-stroke eraser and undo/redo.
+- Multiple local notes with typed text, checklists and editable drawing strokes. Drawing tools include pencil, pen, highlighter, whole-stroke eraser and undo/redo.
 - A large canvas with a Hand tool for pan and zoom, plus stroke selection, movement and deletion at any zoom level.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
@@ -62,4 +62,4 @@ Android releases require the four repository secrets documented in the release w
 ## Tech
 Flutter/Dart UI, Kotlin native Android widget (RemoteViews), JSON files, `path_provider`, `uuid`.
 
-Android application ID for Play testing: `com.hyydra.inknote`.
+Android application ID for Play testing: `com.hyydra.pennino`.

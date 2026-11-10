@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inknote/main.dart';
-import 'package:inknote/note_data.dart';
+import 'package:notes_app/main.dart';
+import 'package:notes_app/note_data.dart';
 
 Note noteWithStroke() => Note(
       id: 'gesture-note',
@@ -9,7 +9,7 @@ Note noteWithStroke() => Note(
       updated: DateTime.utc(2026, 11, 10),
       strokes: [
         Stroke(
-          points: const [InkPoint(100, 100), InkPoint(200, 100)],
+          points: const [CanvasPoint(100, 100), CanvasPoint(200, 100)],
           color: 0xff000000,
           width: 4,
           highlight: false,
@@ -18,7 +18,8 @@ Note noteWithStroke() => Note(
     );
 
 void main() {
-  testWidgets('a stationary tap creates an undoable ink point', (tester) async {
+  testWidgets('a stationary tap creates an undoable stroke point',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -123,7 +124,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Auto updates · v$inkNoteVersion'), findsOneWidget);
+    expect(find.text('Auto updates · v$appVersion'), findsOneWidget);
     expect(find.byTooltip('Check for updates'), findsWidgets);
   });
 }

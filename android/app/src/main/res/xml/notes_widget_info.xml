@@ -4,4 +4,4 @@
     android:minResizeWidth="110dp" android:minResizeHeight="110dp"
     android:targetCellWidth="4" android:targetCellHeight="6"
     android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen"
-    android:initialLayout="@layout/inknote_widget" android:updatePeriodMillis="0"/>
+    android:initialLayout="@layout/notes_widget" android:updatePeriodMillis="0"/>

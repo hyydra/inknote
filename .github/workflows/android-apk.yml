@@ -42,7 +42,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
       - name: Generate and build Linux project
         run: |
-          project="$RUNNER_TEMP/inknote"
+          project="$RUNNER_TEMP/notes-app"
           flutter create --no-pub --platforms=linux --org com.hyydra "$project"
           cp pubspec.yaml "$project/"
           cp -R lib/. "$project/lib/"
@@ -69,5 +69,5 @@ jobs:
             choco install innosetup --no-progress -y
           }
           $version = (Select-String '^version:\s*([0-9.]+)' pubspec.yaml).Matches.Groups[1].Value
-          & $iscc "/DMyAppVersion=$version" installer/inknote.iss
+          & $iscc "/DMyAppVersion=$version" installer/pennino.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

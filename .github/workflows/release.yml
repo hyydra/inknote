@@ -28,16 +28,16 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           test -n "$KEYSTORE_BASE64" || { echo "Missing Android signing secrets"; exit 1; }
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/inknote-release.jks
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
           cat > android/key.properties <<EOF
           storePassword=$STORE_PASSWORD
           keyPassword=$KEY_PASSWORD
           keyAlias=$KEY_ALIAS
-          storeFile=inknote-release.jks
+          storeFile=release.jks
           EOF
       - run: flutter pub get
       - name: Build universal Android APK
-        run: flutter build apk --release --dart-define=INKNOTE_VERSION=${GITHUB_REF_NAME#v}
+        run: flutter build apk --release --dart-define=APP_VERSION=${GITHUB_REF_NAME#v}
       - run: cp build/app/outputs/flutter-apk/app-release.apk Pennino-Android.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -55,7 +55,7 @@ jobs:
       - run: flutter pub get
       - name: Build Windows app
         shell: pwsh
-        run: flutter build windows --release --dart-define=INKNOTE_VERSION=$($env:GITHUB_REF_NAME.TrimStart('v'))
+        run: flutter build windows --release --dart-define=APP_VERSION=$($env:GITHUB_REF_NAME.TrimStart('v'))
       - name: Package portable Windows app
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Pennino-Windows.zip
@@ -66,7 +66,7 @@ jobs:
           if (-not (Test-Path $iscc)) {
             choco install innosetup --no-progress -y
           }
-          & $iscc "/DMyAppVersion=$($env:GITHUB_REF_NAME.TrimStart('v'))" installer/inknote.iss
+          & $iscc "/DMyAppVersion=$($env:GITHUB_REF_NAME.TrimStart('v'))" installer/pennino.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item artifacts/Pennino-Windows-Setup.exe Pennino-Windows-Setup.exe
       - uses: actions/upload-artifact@v4
@@ -83,7 +83,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: Create release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows.zip Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows.zip Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Pennino ${GITHUB_REF_NAME#v}" --latest
+          else
+            gh release create "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows.zip Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --title "Pennino ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag
+          fi

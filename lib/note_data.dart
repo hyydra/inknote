@@ -1,17 +1,19 @@
-class InkPoint {
+class CanvasPoint {
   final double x;
   final double y;
 
-  const InkPoint(this.x, this.y);
+  const CanvasPoint(this.x, this.y);
 
-  factory InkPoint.fromJson(Map<String, dynamic> value) =>
-      InkPoint((value['x'] as num).toDouble(), (value['y'] as num).toDouble());
+  factory CanvasPoint.fromJson(Map<String, dynamic> value) => CanvasPoint(
+        (value['x'] as num).toDouble(),
+        (value['y'] as num).toDouble(),
+      );
 
   Map<String, dynamic> toJson() => {'x': x, 'y': y};
 }
 
 class Stroke {
-  final List<InkPoint> points;
+  final List<CanvasPoint> points;
   final int color;
   final double width;
   final bool highlight;
@@ -29,7 +31,7 @@ class Stroke {
         points: (value['points'] as List? ?? const [])
             .map(
               (point) =>
-                  InkPoint.fromJson(Map<String, dynamic>.from(point as Map)),
+                  CanvasPoint.fromJson(Map<String, dynamic>.from(point as Map)),
             )
             .toList(),
         color: value['color'] as int,
