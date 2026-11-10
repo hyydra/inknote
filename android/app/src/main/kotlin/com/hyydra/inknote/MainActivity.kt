@@ -25,7 +25,7 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 try {
-                    val title = call.argument<String>("title") ?: "InkNote"
+                    val title = call.argument<String>("title") ?: "Pennino"
                     val base64 = call.argument<String>("png") ?: ""
                     File(filesDir, "inknote_widget.png")
                         .writeBytes(Base64.decode(base64, Base64.DEFAULT))

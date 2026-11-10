@@ -83,4 +83,47 @@ void main() {
       Colors.transparent,
     );
   });
+
+  testWidgets('text tools have a dedicated always-visible toolbar',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(home: EditorPage(note: noteWithStroke())),
+    );
+
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(find.text('Text blocks'), findsOneWidget);
+    expect(find.text('Add text block'), findsWidgets);
+
+    await tester.tap(find.text('Text blocks'));
+    await tester.pump();
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.hintText == 'Text block 1',
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    expect(find.text('1 text block'), findsOneWidget);
+  });
+
+  testWidgets('Windows displays automatic update status and version',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    expect(find.text('Auto updates · v$inkNoteVersion'), findsOneWidget);
+    expect(find.byTooltip('Check for updates'), findsWidgets);
+  });
 }

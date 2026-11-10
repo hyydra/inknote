@@ -16,7 +16,7 @@ import 'note_data.dart';
 import 'note_store.dart';
 
 const inkNoteVersion =
-    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.1');
+    String.fromEnvironment('INKNOTE_VERSION', defaultValue: '0.4.2');
 
 class UpdateInfo {
   final String version;
@@ -54,7 +54,7 @@ class UpdateService {
           'https://api.github.com/repos/hyydra/inknote/releases/latest'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
-        ..set(HttpHeaders.userAgentHeader, 'InkNote/$inkNoteVersion');
+        ..set(HttpHeaders.userAgentHeader, 'Pennino/$inkNoteVersion');
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) return null;
       final release = jsonDecode(await response.transform(utf8.decoder).join())
@@ -85,14 +85,14 @@ class UpdateService {
     if (update == null) {
       if (!automatic) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('InkNote is up to date.')));
+            const SnackBar(content: Text('Pennino is up to date.')));
       }
       return;
     }
     final install = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-              title: const Text('InkNote update available'),
+              title: const Text('Pennino update available'),
               content: Text(
                   'Version ${update.version} is available. Download and install it now?'),
               actions: [
@@ -166,7 +166,7 @@ class InkNoteApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'InkNote',
+        title: 'Pennino',
         theme: ThemeData(
           useMaterial3: true,
           colorSchemeSeed: const Color(0xff594fc8),
@@ -338,6 +338,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const syncChannel = MethodChannel('inknote/sync');
   late final TextEditingController titleController;
   final List<TextEditingController> textControllers = [];
+  final List<TextBlockFormat> textFormats = [];
+  int activeTextIndex = 0;
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
@@ -369,7 +371,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
     taskController = TextEditingController();
-    _replaceTextControllers(widget.note.textBlocks);
+    _replaceTextControllers(
+      widget.note.textBlocks,
+      formats: widget.note.textBlockFormats,
+    );
   }
 
   @override
@@ -408,19 +413,39 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return controller;
   }
 
-  void _replaceTextControllers(Iterable<String> blocks) {
+  void _replaceTextControllers(
+    Iterable<String> blocks, {
+    Iterable<TextBlockFormat>? formats,
+  }) {
     for (final controller in textControllers) {
       controller.dispose();
     }
     textControllers
       ..clear()
       ..addAll(blocks.map(_textController));
+    final savedFormats = formats?.toList() ?? const <TextBlockFormat>[];
+    textFormats
+      ..clear()
+      ..addAll(List.generate(
+        textControllers.length,
+        (index) => index < savedFormats.length
+            ? TextBlockFormat(
+                bold: savedFormats[index].bold,
+                color: savedFormats[index].color,
+              )
+            : TextBlockFormat(),
+      ));
+    activeTextIndex = textControllers.isEmpty
+        ? 0
+        : activeTextIndex.clamp(0, textControllers.length - 1);
   }
 
   void addTextBlock() {
     setState(() {
       showText = true;
       textControllers.add(_textController(''));
+      textFormats.add(TextBlockFormat());
+      activeTextIndex = textControllers.length - 1;
     });
     _markChanged();
   }
@@ -428,7 +453,106 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void removeTextBlock(int index) {
     setState(() {
       textControllers.removeAt(index).dispose();
+      textFormats.removeAt(index);
+      activeTextIndex = textControllers.isEmpty
+          ? 0
+          : activeTextIndex.clamp(0, textControllers.length - 1);
     });
+    _markChanged();
+  }
+
+  TextEditingController? get _activeTextController => textControllers.isEmpty
+      ? null
+      : textControllers[activeTextIndex.clamp(0, textControllers.length - 1)];
+
+  void _toggleLinePrefix(String prefix) {
+    final controller = _activeTextController;
+    if (controller == null) {
+      addTextBlock();
+      return;
+    }
+    final value = controller.value;
+    final cursor =
+        value.selection.isValid ? value.selection.start : value.text.length;
+    final lineStart = value.text.lastIndexOf('\n', math.max(0, cursor - 1)) + 1;
+    final lineEndMatch = value.text.indexOf('\n', cursor);
+    final lineEnd = lineEndMatch == -1 ? value.text.length : lineEndMatch;
+    final line = value.text.substring(lineStart, lineEnd);
+    const knownPrefixes = ['☐ ', '• ', '1. '];
+    final currentPrefix = knownPrefixes.where(line.startsWith).firstOrNull;
+    final removeLength = currentPrefix?.length ?? 0;
+    final replacement = currentPrefix == prefix ? '' : prefix;
+    final text = value.text.replaceRange(
+      lineStart,
+      lineStart + removeLength,
+      replacement,
+    );
+    final nextCursor = (cursor - removeLength + replacement.length)
+        .clamp(lineStart, text.length);
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: nextCursor),
+    );
+  }
+
+  void _changeIndent(bool increase) {
+    final controller = _activeTextController;
+    if (controller == null) return;
+    final value = controller.value;
+    final cursor =
+        value.selection.isValid ? value.selection.start : value.text.length;
+    final lineStart = value.text.lastIndexOf('\n', math.max(0, cursor - 1)) + 1;
+    final remove =
+        !increase && value.text.substring(lineStart).startsWith('    ');
+    final text = value.text.replaceRange(
+      lineStart,
+      lineStart + (remove ? 4 : 0),
+      increase ? '    ' : '',
+    );
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(
+        offset: (cursor +
+                (increase
+                    ? 4
+                    : remove
+                        ? -4
+                        : 0))
+            .clamp(lineStart, text.length),
+      ),
+    );
+  }
+
+  Future<void> _chooseTextColor() async {
+    if (textControllers.isEmpty) return;
+    final colors = [
+      Colors.black,
+      Colors.red,
+      Colors.orange,
+      Colors.green,
+      Colors.blue,
+      Colors.purple,
+    ];
+    final selected = await showDialog<Color>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Text colour'),
+        content: Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final color in colors)
+              InkWell(
+                onTap: () => Navigator.pop(dialogContext, color),
+                borderRadius: BorderRadius.circular(24),
+                child: CircleAvatar(backgroundColor: color),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => textFormats[activeTextIndex].color = selected.toARGB32());
     _markChanged();
   }
 
@@ -581,6 +705,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         : titleController.text.trim();
     widget.note.textBlocks =
         textControllers.map((controller) => controller.text).toList();
+    widget.note.textBlockFormats = textFormats
+        .map(
+            (format) => TextBlockFormat(bold: format.bold, color: format.color))
+        .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
   }
@@ -662,7 +790,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Widget updated. Add InkNote widget from the Android home screen.',
+              'Widget updated. Add the Pennino widget from the Android home screen.',
             ),
           ),
         );
@@ -876,6 +1004,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           setState(() {
             widget.note.title = syncedCurrent.title;
             widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
+            widget.note.textBlockFormats = syncedCurrent.textBlockFormats
+                .map((format) => TextBlockFormat(
+                      bold: format.bold,
+                      color: format.color,
+                    ))
+                .toList();
             widget.note.updated = syncedCurrent.updated;
             widget.note.strokes = syncedCurrent.strokes;
             widget.note.tasks = syncedCurrent.tasks;
@@ -887,7 +1021,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             gestureHistoryRecorded = false;
             strokeHistory.clear();
             titleController.text = syncedCurrent.title;
-            _replaceTextControllers(syncedCurrent.textBlocks);
+            _replaceTextControllers(
+              syncedCurrent.textBlocks,
+              formats: syncedCurrent.textBlockFormats,
+            );
           });
         } finally {
           applyingExternalChange = false;
@@ -978,6 +1115,95 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _textToolbar() => SizedBox(
+        key: const Key('text-toolbar'),
+        height: 52,
+        child: Material(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ChoiceChip(
+                  avatar: const Icon(Icons.text_fields, size: 18),
+                  label: const Text('Text blocks'),
+                  selected: showText,
+                  onSelected: (selected) => setState(() => showText = selected),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ActionChip(
+                  avatar: const Icon(Icons.add, size: 18),
+                  label: const Text('Add text block'),
+                  tooltip: 'Add text block',
+                  onPressed: addTextBlock,
+                ),
+              ),
+              if (textControllers.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Center(
+                    child: Text(
+                      '${textControllers.length} text ${textControllers.length == 1 ? 'block' : 'blocks'}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+              if (textControllers.isNotEmpty) ...[
+                IconButton(
+                  tooltip: 'Checklist',
+                  onPressed: () => _toggleLinePrefix('☐ '),
+                  icon: const Icon(Icons.check_box_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Numbered list',
+                  onPressed: () => _toggleLinePrefix('1. '),
+                  icon: const Icon(Icons.format_list_numbered),
+                ),
+                IconButton(
+                  tooltip: 'Bulleted list',
+                  onPressed: () => _toggleLinePrefix('• '),
+                  icon: const Icon(Icons.format_list_bulleted),
+                ),
+                IconButton(
+                  tooltip: 'Decrease indent',
+                  onPressed: () => _changeIndent(false),
+                  icon: const Icon(Icons.format_indent_decrease),
+                ),
+                IconButton(
+                  tooltip: 'Increase indent',
+                  onPressed: () => _changeIndent(true),
+                  icon: const Icon(Icons.format_indent_increase),
+                ),
+                IconButton(
+                  tooltip: 'Text colour',
+                  onPressed: _chooseTextColor,
+                  icon: Icon(
+                    Icons.format_color_text,
+                    color: Color(textFormats[activeTextIndex].color),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Bold',
+                  isSelected: textFormats[activeTextIndex].bold,
+                  onPressed: () {
+                    setState(() {
+                      textFormats[activeTextIndex].bold =
+                          !textFormats[activeTextIndex].bold;
+                    });
+                    _markChanged();
+                  },
+                  icon: const Icon(Icons.format_bold),
+                ),
+              ],
             ],
           ),
         ),
@@ -1209,6 +1435,19 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             }),
                           ),
                         ),
+                      if (Platform.isWindows)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: ActionChip(
+                            avatar: const Icon(
+                              Icons.system_update_outlined,
+                              size: 18,
+                            ),
+                            label: Text('Auto updates · v$inkNoteVersion'),
+                            tooltip: 'Check for updates',
+                            onPressed: () => UpdateService.prompt(context),
+                          ),
+                        ),
                       if (selectedStrokes.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.all(4),
@@ -1246,6 +1485,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+              _textToolbar(),
               if (showText)
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 230),
@@ -1256,9 +1496,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         padding: const EdgeInsets.fromLTRB(12, 0, 4, 2),
                         child: Row(
                           children: [
-                            const Expanded(child: Text('Text blocks')),
+                            const Expanded(child: Text('Typed text')),
                             IconButton(
-                              tooltip: 'Add text block',
+                              tooltip: 'Add another text block',
                               onPressed: addTextBlock,
                               icon: const Icon(Icons.add),
                             ),
@@ -1287,9 +1527,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   Expanded(
                                     child: TextField(
                                       controller: textControllers[index],
+                                      onTap: () => setState(
+                                        () => activeTextIndex = index,
+                                      ),
                                       minLines: 2,
                                       maxLines: null,
                                       keyboardType: TextInputType.multiline,
+                                      style: TextStyle(
+                                        color: Color(textFormats[index].color),
+                                        fontWeight: textFormats[index].bold
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
                                       decoration: InputDecoration(
                                         hintText: 'Text block ${index + 1}',
                                         border: const OutlineInputBorder(),

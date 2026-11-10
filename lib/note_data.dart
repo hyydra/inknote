@@ -69,12 +69,28 @@ class TaskItem {
   Map<String, dynamic> toJson() => {'text': text, 'done': done};
 }
 
+class TextBlockFormat {
+  bool bold;
+  int color;
+
+  TextBlockFormat({this.bold = false, this.color = 0xff000000});
+
+  factory TextBlockFormat.fromJson(Map<String, dynamic> value) =>
+      TextBlockFormat(
+        bold: value['bold'] as bool? ?? false,
+        color: value['color'] as int? ?? 0xff000000,
+      );
+
+  Map<String, dynamic> toJson() => {'bold': bold, 'color': color};
+}
+
 class Note {
-  static const int currentFormatVersion = 2;
+  static const int currentFormatVersion = 3;
 
   String id;
   String title;
   List<String> textBlocks;
+  List<TextBlockFormat> textBlockFormats;
   int backgroundColor;
   String backgroundPattern;
   DateTime updated;
@@ -86,18 +102,27 @@ class Note {
     required this.title,
     String text = '',
     List<String>? textBlocks,
+    List<TextBlockFormat>? textBlockFormats,
     this.backgroundColor = 0xfffffdf7,
     this.backgroundPattern = 'lined',
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
   })  : textBlocks = textBlocks ?? (text.isEmpty ? <String>[] : <String>[text]),
+        textBlockFormats = textBlockFormats ??
+            List.generate(
+              textBlocks?.length ?? (text.isEmpty ? 0 : 1),
+              (_) => TextBlockFormat(),
+            ),
         tasks = tasks ?? [];
 
   String get text => textBlocks.join('\n\n');
 
   set text(String value) {
     textBlocks = value.isEmpty ? <String>[] : <String>[value];
+    textBlockFormats = value.isEmpty
+        ? <TextBlockFormat>[]
+        : <TextBlockFormat>[TextBlockFormat()];
   }
 
   factory Note.fromJson(Map<String, dynamic> value) {
@@ -112,6 +137,13 @@ class Note {
       text: value['text'] as String? ?? '',
       textBlocks: (value['textBlocks'] as List?)
           ?.map((block) => block as String)
+          .toList(),
+      textBlockFormats: (value['textBlockFormats'] as List?)
+          ?.map(
+            (format) => TextBlockFormat.fromJson(
+              Map<String, dynamic>.from(format as Map),
+            ),
+          )
           .toList(),
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
@@ -136,6 +168,10 @@ class Note {
         'title': title,
         'text': text,
         'textBlocks': textBlocks,
+        'textBlockFormats': textBlockFormats
+            .take(textBlocks.length)
+            .map((format) => format.toJson())
+            .toList(),
         'backgroundColor': backgroundColor,
         'backgroundPattern': backgroundPattern,
         'updated': updated.toIso8601String(),

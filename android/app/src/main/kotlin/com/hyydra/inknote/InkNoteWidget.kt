@@ -23,7 +23,7 @@ class InkNoteWidget : AppWidgetProvider() {
         private fun update(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.inknote_widget)
             val prefs = context.getSharedPreferences("inknote_widget", Context.MODE_PRIVATE)
-            views.setTextViewText(R.id.widget_title, prefs.getString("title", "InkNote"))
+            views.setTextViewText(R.id.widget_title, prefs.getString("title", "Pennino"))
             val file = File(context.filesDir, "inknote_widget.png")
             if (file.exists()) {
                 val opts = BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.RGB_565; inSampleSize = 2 }
