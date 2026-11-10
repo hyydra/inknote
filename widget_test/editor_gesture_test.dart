@@ -40,11 +40,47 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(360, 740));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: EditorPage(note: noteWithStroke())),
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: noteWithStroke()),
+      ),
     );
     await tester.pump();
 
     expect(tester.takeException(), isNull);
     expect(find.byType(InteractiveViewer), findsOneWidget);
+    expect(
+      tester.getCenter(find.byKey(const Key('android-drawing-toolbar'))).dy,
+      greaterThan(600),
+    );
+  });
+
+  testWidgets('multiple transparent text blocks can be added and scrolled',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(home: EditorPage(note: noteWithStroke())),
+    );
+
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+
+    final firstBlock = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.hintText == 'Text block 1',
+    );
+    final secondBlock = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.hintText == 'Text block 2',
+    );
+    expect(firstBlock, findsOneWidget);
+    expect(secondBlock, findsOneWidget);
+    expect(
+      tester.widget<TextField>(firstBlock).decoration?.fillColor,
+      Colors.transparent,
+    );
   });
 }

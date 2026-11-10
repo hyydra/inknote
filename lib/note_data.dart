@@ -70,11 +70,11 @@ class TaskItem {
 }
 
 class Note {
-  static const int currentFormatVersion = 1;
+  static const int currentFormatVersion = 2;
 
   String id;
   String title;
-  String text;
+  List<String> textBlocks;
   int backgroundColor;
   String backgroundPattern;
   DateTime updated;
@@ -84,13 +84,21 @@ class Note {
   Note({
     required this.id,
     required this.title,
-    this.text = '',
+    String text = '',
+    List<String>? textBlocks,
     this.backgroundColor = 0xfffffdf7,
     this.backgroundPattern = 'lined',
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
-  }) : tasks = tasks ?? [];
+  })  : textBlocks = textBlocks ?? (text.isEmpty ? <String>[] : <String>[text]),
+        tasks = tasks ?? [];
+
+  String get text => textBlocks.join('\n\n');
+
+  set text(String value) {
+    textBlocks = value.isEmpty ? <String>[] : <String>[value];
+  }
 
   factory Note.fromJson(Map<String, dynamic> value) {
     final formatVersion = value['formatVersion'] as int? ?? 0;
@@ -102,6 +110,9 @@ class Note {
       id: value['id'] as String,
       title: value['title'] as String,
       text: value['text'] as String? ?? '',
+      textBlocks: (value['textBlocks'] as List?)
+          ?.map((block) => block as String)
+          .toList(),
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
       updated: DateTime.parse(value['updated'] as String),
@@ -124,6 +135,7 @@ class Note {
         'id': id,
         'title': title,
         'text': text,
+        'textBlocks': textBlocks,
         'backgroundColor': backgroundColor,
         'backgroundPattern': backgroundPattern,
         'updated': updated.toIso8601String(),
