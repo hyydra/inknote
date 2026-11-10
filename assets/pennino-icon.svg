@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <path id="noodle" d="M340 622 C322 560 358 500 340 430 C328 370 330 300 372 265 C410 240 470 238 540 238 C790 215 800 560 580 572 C500 576 440 560 395 540 C352 528 330 548 340 585"/>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="#1e2327"/>
+  <g transform="translate(-6 8)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <use href="#noodle" stroke="#c98f1c" stroke-width="82"/>
+    <use href="#noodle" stroke="#f1c24a" stroke-width="64"/>
+    <use href="#noodle" stroke="#ffe39a" stroke-width="10" transform="translate(-10 -12)" opacity=".7"/>
+    <!-- pen nib as the stem's end -->
+    <path d="M296 626 H384 L394 738 L340 876 L286 738 Z" fill="#e6eaee" stroke="none"/>
+    <path d="M340 876 L394 738 L384 626 H340 Z" fill="#b9c1c9" stroke="none"/>
+    <circle cx="340" cy="738" r="15" fill="#1e2327" stroke="none"/>
+    <path d="M340 752 V870" stroke="#1e2327" stroke-width="7"/>
+  </g>
+</svg>
