@@ -15,7 +15,7 @@ import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.3');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.4');
 
 class UpdateInfo {
   final String version;
@@ -324,7 +324,7 @@ class _LibraryPageState extends State<LibraryPage> {
       );
 }
 
-enum DrawTool { hand, select, pencil, pen, highlighter, eraser }
+enum DrawTool { hand, text, select, pencil, pen, highlighter, eraser }
 
 enum PaperPattern { plain, lined, grid, dots }
 
@@ -435,8 +435,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ? TextBlockFormat(
                 bold: savedFormats[index].bold,
                 color: savedFormats[index].color,
+                x: savedFormats[index].x,
+                y: savedFormats[index].y,
+                width: savedFormats[index].width,
+                height: savedFormats[index].height,
               )
-            : TextBlockFormat(),
+            : TextBlockFormat(y: 48 + index * 184),
       ));
     activeTextIndex = textControllers.isEmpty
         ? 0
@@ -446,8 +450,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void addTextBlock() {
     setState(() {
       showText = true;
+      tool = DrawTool.text;
       textControllers.add(_textController(''));
-      textFormats.add(TextBlockFormat());
+      textFormats.add(TextBlockFormat(
+        x: 48 + (textControllers.length % 3) * 24,
+        y: 48 + (textControllers.length - 1) * 184,
+      ));
       activeTextIndex = textControllers.length - 1;
     });
     _markChanged();
@@ -481,7 +489,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final lineEndMatch = value.text.indexOf('\n', cursor);
     final lineEnd = lineEndMatch == -1 ? value.text.length : lineEndMatch;
     final line = value.text.substring(lineStart, lineEnd);
-    const knownPrefixes = ['☐ ', '• ', '1. '];
+    const knownPrefixes = ['☐ ', '☑ ', '• ', '1. '];
     final currentPrefix = knownPrefixes.where(line.startsWith).firstOrNull;
     final removeLength = currentPrefix?.length ?? 0;
     final replacement = currentPrefix == prefix ? '' : prefix;
@@ -495,6 +503,30 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     controller.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: nextCursor),
+    );
+  }
+
+  void _toggleChecklistAtSelection(int index) {
+    if (index < 0 || index >= textControllers.length) return;
+    final controller = textControllers[index];
+    final value = controller.value;
+    if (!value.selection.isValid) return;
+    final cursor = value.selection.extentOffset;
+    final lineStart = value.text.lastIndexOf('\n', math.max(0, cursor - 1)) + 1;
+    if (cursor < lineStart || cursor > lineStart + 2) return;
+    final lineEndMatch = value.text.indexOf('\n', cursor);
+    final lineEnd = lineEndMatch == -1 ? value.text.length : lineEndMatch;
+    final line = value.text.substring(lineStart, lineEnd);
+    final replacement = line.startsWith('☐ ')
+        ? '☑ '
+        : line.startsWith('☑ ')
+            ? '☐ '
+            : null;
+    if (replacement == null) return;
+    controller.value = value.copyWith(
+      text: value.text.replaceRange(lineStart, lineStart + 2, replacement),
+      selection: TextSelection.collapsed(offset: cursor),
+      composing: TextRange.empty,
     );
   }
 
@@ -709,8 +741,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.textBlocks =
         textControllers.map((controller) => controller.text).toList();
     widget.note.textBlockFormats = textFormats
-        .map(
-            (format) => TextBlockFormat(bold: format.bold, color: format.color))
+        .map((format) => TextBlockFormat(
+              bold: format.bold,
+              color: format.color,
+              x: format.x,
+              y: format.y,
+              width: format.width,
+              height: format.height,
+            ))
         .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
@@ -1011,6 +1049,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 .map((format) => TextBlockFormat(
                       bold: format.bold,
                       color: format.color,
+                      x: format.x,
+                      y: format.y,
+                      width: format.width,
+                      height: format.height,
                     ))
                 .toList();
             widget.note.updated = syncedCurrent.updated;
@@ -1069,6 +1111,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             children: [
               for (final entry in [
                 (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+                (DrawTool.text, Icons.text_fields, 'Text'),
                 (DrawTool.select, Icons.select_all, 'Select'),
                 (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
                 (DrawTool.pen, Icons.edit, 'Pen'),
@@ -1083,6 +1126,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     selected: tool == entry.$1,
                     onSelected: (_) => setState(() {
                       tool = entry.$1;
+                      if (tool == DrawTool.text) showText = true;
                       if (tool != DrawTool.select) selectedStrokes.clear();
                     }),
                   ),
@@ -1137,8 +1181,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 child: ChoiceChip(
                   avatar: const Icon(Icons.text_fields, size: 18),
                   label: const Text('Text blocks'),
-                  selected: showText,
-                  onSelected: (selected) => setState(() => showText = selected),
+                  selected: tool == DrawTool.text,
+                  onSelected: (selected) => setState(() {
+                    showText = true;
+                    tool = selected ? DrawTool.text : DrawTool.hand;
+                  }),
                 ),
               ),
               Padding(
@@ -1211,6 +1258,141 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           ),
         ),
       );
+
+  Widget _canvasTextBlock(int index) {
+    final format = textFormats[index];
+    final selected = activeTextIndex == index;
+    final scale = math.max(0.001, canvasTransform.scale);
+    return Positioned(
+      key: ValueKey('canvas-text-block-$index'),
+      left: format.x,
+      top: format.y,
+      width: format.width,
+      height: format.height,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() {
+          activeTextIndex = index;
+          tool = DrawTool.text;
+        }),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            border: selected
+                ? Border.all(color: Theme.of(context).colorScheme.primary)
+                : null,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                top: 28,
+                child: TextField(
+                  key: ValueKey('canvas-text-field-$index'),
+                  controller: textControllers[index],
+                  onTap: () {
+                    setState(() {
+                      activeTextIndex = index;
+                      tool = DrawTool.text;
+                    });
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _toggleChecklistAtSelection(index);
+                    });
+                  },
+                  expands: true,
+                  minLines: null,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  textAlignVertical: TextAlignVertical.top,
+                  style: TextStyle(
+                    color: Color(format.color),
+                    fontWeight:
+                        format.bold ? FontWeight.bold : FontWeight.normal,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Text block ${index + 1}',
+                    filled: false,
+                    fillColor: Colors.transparent,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                  ),
+                ),
+              ),
+              if (selected) ...[
+                Positioned(
+                  left: 0,
+                  right: 56,
+                  top: 0,
+                  height: 28,
+                  child: Listener(
+                    key: ValueKey('move-text-block-$index'),
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (_) => setState(() {
+                      activeTextIndex = index;
+                      tool = DrawTool.text;
+                    }),
+                    onPointerMove: (event) => setState(() {
+                      format.x = math.max(0, format.x + event.delta.dx / scale);
+                      format.y = math.max(0, format.y + event.delta.dy / scale);
+                    }),
+                    onPointerUp: (_) => _markChanged(),
+                    onPointerCancel: (_) => _markChanged(),
+                    child: const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 6),
+                        child: Icon(Icons.drag_indicator, size: 20),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 24,
+                  top: 0,
+                  width: 28,
+                  height: 28,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    tooltip: 'Delete text block',
+                    onPressed: () => removeTextBlock(index),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  width: 32,
+                  height: 32,
+                  child: Listener(
+                    key: ValueKey('resize-text-block-$index'),
+                    behavior: HitTestBehavior.opaque,
+                    onPointerMove: (event) => setState(() {
+                      format.width = math.max(
+                        140,
+                        format.width + event.delta.dx / scale,
+                      );
+                      format.height = math.max(
+                        90,
+                        format.height + event.delta.dy / scale,
+                      );
+                    }),
+                    onPointerUp: (_) => _markChanged(),
+                    onPointerCancel: (_) => _markChanged(),
+                    child: const Align(
+                      alignment: Alignment.bottomRight,
+                      child: Icon(Icons.open_in_full, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => PopScope(
@@ -1415,6 +1597,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     children: [
                       for (final entry in [
                         (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
+                        (DrawTool.text, Icons.text_fields, 'Text'),
                         (DrawTool.select, Icons.select_all, 'Select'),
                         (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
                         (DrawTool.pen, Icons.edit, 'Pen'),
@@ -1433,6 +1616,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             selected: tool == entry.$1,
                             onSelected: (_) => setState(() {
                               tool = entry.$1;
+                              if (tool == DrawTool.text) showText = true;
                               if (tool != DrawTool.select)
                                 selectedStrokes.clear();
                             }),
@@ -1482,81 +1666,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                       color: Colors.white,
                                     )
                                   : null,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              _textToolbar(),
-              if (showText)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 230),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 4, 2),
-                        child: Row(
-                          children: [
-                            const Expanded(child: Text('Typed text')),
-                            IconButton(
-                              tooltip: 'Add another text block',
-                              onPressed: addTextBlock,
-                              icon: const Icon(Icons.add),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (textControllers.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                          child: OutlinedButton.icon(
-                            onPressed: addTextBlock,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add text block'),
-                          ),
-                        )
-                      else
-                        Flexible(
-                          child: ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 4, 8),
-                            itemCount: textControllers.length,
-                            itemBuilder: (context, index) => Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: textControllers[index],
-                                      onTap: () => setState(
-                                        () => activeTextIndex = index,
-                                      ),
-                                      minLines: 2,
-                                      maxLines: null,
-                                      keyboardType: TextInputType.multiline,
-                                      style: TextStyle(
-                                        color: Color(textFormats[index].color),
-                                        fontWeight: textFormats[index].bold
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
-                                      ),
-                                      decoration: InputDecoration(
-                                        hintText: 'Text block ${index + 1}',
-                                        border: const OutlineInputBorder(),
-                                        filled: true,
-                                        fillColor: Colors.transparent,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Delete text block',
-                                    onPressed: () => removeTextBlock(index),
-                                    icon: const Icon(Icons.close),
-                                  ),
-                                ],
-                              ),
                             ),
                           ),
                         ),
@@ -1630,7 +1739,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     final canvasWidth = math.max(2000.0, constraints.maxWidth);
                     final canvasHeight =
                         math.max(3000.0, constraints.maxHeight * 3);
-                    final isHandTool = tool == DrawTool.hand;
+                    final isHandTool =
+                        tool == DrawTool.hand || tool == DrawTool.text;
                     return ClipRect(
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
@@ -1648,27 +1758,41 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             transformationController: transformationController,
                             alignment: Alignment.topLeft,
                             constrained: false,
+                            panEnabled: tool == DrawTool.hand,
+                            scaleEnabled: tool == DrawTool.hand,
                             boundaryMargin: const EdgeInsets.all(500),
                             minScale: 0.25,
                             maxScale: 5,
                             child: SizedBox(
                               width: canvasWidth,
                               height: canvasHeight,
-                              child: CustomPaint(
-                                painter: StrokePainter(
-                                  widget.note.strokes,
-                                  active,
-                                  selectedIndices: selectedStrokes,
-                                  selectionScale: canvasTransform.scale,
-                                  background:
-                                      Color(widget.note.backgroundColor),
-                                  pattern: PaperPattern.values.firstWhere(
-                                    (item) =>
-                                        item.name ==
-                                        widget.note.backgroundPattern,
-                                    orElse: () => PaperPattern.lined,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Positioned.fill(
+                                    child: CustomPaint(
+                                      painter: StrokePainter(
+                                        widget.note.strokes,
+                                        active,
+                                        selectedIndices: selectedStrokes,
+                                        selectionScale: canvasTransform.scale,
+                                        background:
+                                            Color(widget.note.backgroundColor),
+                                        pattern: PaperPattern.values.firstWhere(
+                                          (item) =>
+                                              item.name ==
+                                              widget.note.backgroundPattern,
+                                          orElse: () => PaperPattern.lined,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  if (showText)
+                                    for (var index = 0;
+                                        index < textControllers.length;
+                                        index++)
+                                      _canvasTextBlock(index),
+                                ],
                               ),
                             ),
                           ),
@@ -1678,8 +1802,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   },
                 ),
               ),
-              if (Theme.of(context).platform == TargetPlatform.android)
-                SafeArea(top: false, child: _androidDrawingToolbar()),
+              if (tool == DrawTool.text)
+                SafeArea(top: false, child: _textToolbar())
+              else if (Theme.of(context).platform == TargetPlatform.android)
+                SafeArea(
+                  top: false,
+                  child: _androidDrawingToolbar(),
+                ),
             ],
           ),
         ),

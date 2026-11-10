@@ -23,7 +23,10 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: EditorPage(note: noteWithStroke())),
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
     );
 
     final canvas = find.byType(InteractiveViewer);
@@ -56,14 +59,18 @@ void main() {
     );
   });
 
-  testWidgets('multiple transparent text blocks can be added and scrolled',
-      (tester) async {
+  testWidgets('multiple transparent text blocks can be added', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: EditorPage(note: noteWithStroke())),
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
     );
 
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
     await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
     await tester.tap(find.byTooltip('Add text block'));
@@ -83,34 +90,128 @@ void main() {
       tester.widget<TextField>(firstBlock).decoration?.fillColor,
       Colors.transparent,
     );
+    expect(tester.widget<TextField>(firstBlock).decoration?.filled, isFalse);
   });
 
-  testWidgets('text tools have a dedicated always-visible toolbar',
+  testWidgets('a text block can be moved and resized on the canvas',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+
+    Positioned block() => tester.widget<Positioned>(
+          find.byKey(const ValueKey('canvas-text-block-0')),
+        );
+
+    final initialLeft = block().left!;
+    final initialTop = block().top!;
+    final initialWidth = block().width!;
+    final initialHeight = block().height!;
+
+    await tester.drag(
+      find.byKey(const ValueKey('move-text-block-0')),
+      const Offset(40, 30),
+    );
+    await tester.pump();
+    expect(block().left, greaterThan(initialLeft));
+    expect(block().top, greaterThan(initialTop));
+
+    await tester.drag(
+      find.byKey(const ValueKey('resize-text-block-0')),
+      const Offset(60, 50),
+    );
+    await tester.pump();
+    expect(block().width, greaterThan(initialWidth));
+    expect(block().height, greaterThan(initialHeight));
+  });
+
+  testWidgets('Windows shows a dedicated bottom toolbar in text mode',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: EditorPage(note: noteWithStroke())),
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
     );
 
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
     expect(find.text('Text blocks'), findsOneWidget);
     expect(find.text('Add text block'), findsWidgets);
 
-    await tester.tap(find.text('Text blocks'));
-    await tester.pump();
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
-            widget.decoration?.hintText == 'Text block 1',
-      ),
-      findsNothing,
-    );
-
     await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
     expect(find.text('1 text block'), findsOneWidget);
+    expect(
+      tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
+      greaterThan(600),
+    );
+  });
+
+  testWidgets('Android shows the text toolbar at the bottom in text mode',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
+    expect(
+      tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
+      greaterThan(700),
+    );
+  });
+
+  testWidgets('inline checklist marks toggle when tapped', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    final finder = find.byKey(const ValueKey('canvas-text-field-0'));
+    final field = tester.widget<TextField>(finder);
+    field.controller!.value = const TextEditingValue(
+      text: '☐ Milk',
+      selection: TextSelection.collapsed(offset: 1),
+    );
+    field.onTap!();
+    await tester.pump();
+    expect(field.controller!.text, '☑ Milk');
+
+    field.controller!.selection = const TextSelection.collapsed(offset: 1);
+    field.onTap!();
+    await tester.pump();
+    expect(field.controller!.text, '☐ Milk');
   });
 
   testWidgets('Windows displays automatic update status and version',

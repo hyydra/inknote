@@ -74,20 +74,42 @@ class TaskItem {
 class TextBlockFormat {
   bool bold;
   int color;
+  double x;
+  double y;
+  double width;
+  double height;
 
-  TextBlockFormat({this.bold = false, this.color = 0xff000000});
+  TextBlockFormat({
+    this.bold = false,
+    this.color = 0xff000000,
+    this.x = 48,
+    this.y = 48,
+    this.width = 320,
+    this.height = 160,
+  });
 
   factory TextBlockFormat.fromJson(Map<String, dynamic> value) =>
       TextBlockFormat(
         bold: value['bold'] as bool? ?? false,
         color: value['color'] as int? ?? 0xff000000,
+        x: (value['x'] as num?)?.toDouble() ?? 48,
+        y: (value['y'] as num?)?.toDouble() ?? 48,
+        width: (value['width'] as num?)?.toDouble() ?? 320,
+        height: (value['height'] as num?)?.toDouble() ?? 160,
       );
 
-  Map<String, dynamic> toJson() => {'bold': bold, 'color': color};
+  Map<String, dynamic> toJson() => {
+        'bold': bold,
+        'color': color,
+        'x': x,
+        'y': y,
+        'width': width,
+        'height': height,
+      };
 }
 
 class Note {
-  static const int currentFormatVersion = 3;
+  static const int currentFormatVersion = 4;
 
   String id;
   String title;
@@ -114,7 +136,7 @@ class Note {
         textBlockFormats = textBlockFormats ??
             List.generate(
               textBlocks?.length ?? (text.isEmpty ? 0 : 1),
-              (_) => TextBlockFormat(),
+              (index) => TextBlockFormat(y: 48 + index * 184),
             ),
         tasks = tasks ?? [];
 
@@ -140,13 +162,13 @@ class Note {
       textBlocks: (value['textBlocks'] as List?)
           ?.map((block) => block as String)
           .toList(),
-      textBlockFormats: (value['textBlockFormats'] as List?)
-          ?.map(
-            (format) => TextBlockFormat.fromJson(
-              Map<String, dynamic>.from(format as Map),
-            ),
-          )
-          .toList(),
+      textBlockFormats:
+          (value['textBlockFormats'] as List?)?.asMap().entries.map((entry) {
+        final raw = Map<String, dynamic>.from(entry.value as Map);
+        final format = TextBlockFormat.fromJson(raw);
+        if (!raw.containsKey('y')) format.y = 48 + entry.key * 184;
+        return format;
+      }).toList(),
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
       updated: DateTime.parse(value['updated'] as String),
