@@ -2,8 +2,8 @@
 
 Handwriting-first, local-first notes for Android and Windows.
 
-[![Latest release](https://img.shields.io/github/v/release/hyydra/inknote)](https://github.com/hyydra/inknote/releases/latest)
-[![Build Pennino](https://github.com/hyydra/inknote/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/inknote/actions/workflows/android-apk.yml)
+[![Latest release](https://img.shields.io/github/v/release/hyydra/pennino)](https://github.com/hyydra/pennino/releases/latest)
+[![Build Pennino](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Pennino is a lightweight handwritten-notes application with a zoomable canvas, multiple typed-text blocks, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
@@ -12,10 +12,10 @@ Android and Windows are supported release platforms. Linux support is experiment
 
 ## Download
 
-- [Windows installer](https://github.com/hyydra/inknote/releases/latest/download/Pennino-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
-- [Windows portable ZIP](https://github.com/hyydra/inknote/releases/latest/download/Pennino-Windows.zip) — extract and run without installation.
-- [Android APK](https://github.com/hyydra/inknote/releases/latest/download/Pennino-Android.apk) — universal APK for compatible phones and tablets.
-- [All releases and release notes](https://github.com/hyydra/inknote/releases)
+- [Windows installer](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
+- [Windows portable ZIP](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows.zip) — extract and run without installation.
+- [Android APK](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Android.apk) — universal APK for compatible phones and tablets.
+- [All releases and release notes](https://github.com/hyydra/pennino/releases)
 
 Windows may show a SmartScreen warning because the installer is not yet code-signed.
 
