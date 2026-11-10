@@ -1,5 +1,5 @@
 name: inknote
-description: A handwriting-first note app for Android and Windows.
+description: A handwriting-first note app for Android, Linux and Windows.
 publish_to: none
 version: 0.2.0+2
 environment:
