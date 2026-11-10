@@ -1,8 +1,10 @@
+// ignore_for_file: avoid_print
+
 import 'dart:convert';
 import 'dart:io';
 
-import '../lib/note_data.dart';
-import '../lib/note_store.dart';
+import 'package:inknote/note_data.dart';
+import 'package:inknote/note_store.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {

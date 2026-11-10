@@ -1,7 +1,9 @@
+// ignore_for_file: avoid_print
+
 import 'dart:async';
 import 'dart:io';
 
-import '../lib/autosave_controller.dart';
+import 'package:inknote/autosave_controller.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {

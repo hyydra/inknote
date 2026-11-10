@@ -1,4 +1,6 @@
-import '../lib/note_data.dart';
+// ignore_for_file: avoid_print
+
+import 'package:inknote/note_data.dart';
 
 void expectEqual(Object? actual, Object? expected, String message) {
   if (actual != expected) {
