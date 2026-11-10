@@ -26,16 +26,6 @@ The repository already contains the Android and Windows platform projects, nativ
 
 To show a note on the Android home screen: open the note, choose **Update home widget**, then add the InkNote widget from the launcher. The resizable widget works on compatible Android phones and tablets and opens the writable launcher canvas when tapped.
 
-## Known limitations / future work
-- Google Drive folder sync currently runs manually on Android. Windows folder selection, background sync, encryption and conflict copies are not yet implemented; keep backups for important notes.
-- Rendering uses fixed canvas coordinates and does not yet support pan/zoom, selection, text boxes, PDF, images, searchable handwriting, stylus pressure, or background autosave. The current save implementation is on explicit Save or back navigation.
-- Single pinned preview is shared by all widget instances; current preview is image-only and opens the app rather than a specific note.
-- Android launcher widgets use `RemoteViews`, so they cannot capture continuous pen or finger strokes directly. Tapping the page-sized widget opens the app straight into the writable launcher canvas.
-- The widget preview is 700×420 and currently renders a lined background. Scaling to widget size may distort aspect ratio.
-- A future release should provide proper widget instance selection, note-specific deep links, refresh on sync and screen-reader descriptions.
-- The local file replacement is not crash-atomic on all OSes; add robust backups and migration tests.
-- Android widget bitmap should be size-constrained, downsampled according to system limits, and tested on Android 16/17 devices.
-
 ## GitHub releases
 
 Pushing a version tag such as `v0.3.0` builds and publishes two assets:
