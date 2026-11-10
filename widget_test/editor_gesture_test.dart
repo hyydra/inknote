@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inknote/main.dart';
-import 'package:inknote/note_data.dart';
+import 'package:pennino/main.dart';
+import 'package:pennino/note_data.dart';
 
 Note noteWithStroke() => Note(
       id: 'gesture-note',

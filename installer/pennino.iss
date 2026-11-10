@@ -2,9 +2,9 @@
   #define MyAppVersion "0.0.0"
 #endif
 
-#define MyAppName "InkNote"
+#define MyAppName "Pennino"
 #define MyAppPublisher "hyydra"
-#define MyAppExeName "inknote.exe"
+#define MyAppExeName "pennino.exe"
 #define MyBuildDir "..\build\windows\x64\runner\Release"
 
 [Setup]
@@ -12,8 +12,8 @@ AppId={{3CB0040A-C8B7-498F-9DDC-EF2ED3398266}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppPublisherURL=https://github.com/hyydra/inknote
-AppSupportURL=https://github.com/hyydra/inknote/issues
+AppPublisherURL=https://github.com/hyydra/pennino
+AppSupportURL=https://github.com/hyydra/pennino/issues
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -21,7 +21,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\artifacts
-OutputBaseFilename=InkNote-Windows-Setup
+OutputBaseFilename=Pennino-Windows-Setup
 SetupIconFile=..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
