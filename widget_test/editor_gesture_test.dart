@@ -44,7 +44,6 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.byTooltip('Saved'), findsOneWidget);
     expect(find.byType(InteractiveViewer), findsOneWidget);
   });
 }

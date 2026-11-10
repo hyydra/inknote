@@ -1004,17 +1004,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                           math.max(3000.0, constraints.maxHeight * 3);
                       final isHandTool = tool == DrawTool.hand;
                       return ClipRect(
-                        child: GestureDetector(
+                        child: Listener(
                           behavior: HitTestBehavior.opaque,
-                          onPanDown: isHandTool
+                          onPointerDown: isHandTool
                               ? null
-                              : (details) => begin(details.localPosition),
-                          onPanUpdate: isHandTool
+                              : (event) => begin(event.localPosition),
+                          onPointerMove: isHandTool
                               ? null
-                              : (details) => move(details.localPosition),
-                          onPanEnd: isHandTool ? null : (_) => end(),
-                          onPanCancel: isHandTool ? null : end,
-                          onTapUp: isHandTool ? null : (_) => end(),
+                              : (event) => move(event.localPosition),
+                          onPointerUp: isHandTool ? null : (_) => end(),
+                          onPointerCancel: isHandTool ? null : (_) => end(),
                           child: IgnorePointer(
                             ignoring: !isHandTool,
                             child: InteractiveViewer(
