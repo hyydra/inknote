@@ -1590,82 +1590,84 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (item) => item.name == widget.note.backgroundPattern,
       orElse: () => PaperPattern.lined,
     );
+    final layer = Stack(
+      fit: StackFit.expand,
+      children: [
+        for (var index = 0; index < passes.length; index++)
+          Opacity(
+            opacity: passes[index].$3,
+            child: ClipPath(
+              clipBehavior: Clip.antiAlias,
+              clipper: BlurStrokeClipper(
+                stroke,
+                widthScale: passes[index].$1,
+                reclip: identical(stroke, active) ? canvasRepaint : null,
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CustomPaint(
+                    key: ValueKey('blur-paper-$index'),
+                    painter: StrokePainter(
+                      const [],
+                      null,
+                      background: Color(widget.note.backgroundColor),
+                      pattern: paperPattern,
+                      paintStrokes: false,
+                    ),
+                  ),
+                  ImageFiltered(
+                    key: ValueKey('blur-content-$index'),
+                    imageFilter: ui.ImageFilter.blur(
+                      sigmaX: passes[index].$2,
+                      sigmaY: passes[index].$2,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CustomPaint(
+                          key: ValueKey(
+                            'blur-strokes-$layerIndex-$index',
+                          ),
+                          painter: StrokePainter(
+                            priorStrokes,
+                            null,
+                            paintBackground: false,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (showText && textControllers.isNotEmpty)
+          ClipPath(
+            key: ValueKey('blur-sharp-text-$layerIndex'),
+            clipBehavior: Clip.antiAlias,
+            clipper: BlurStrokeClipper(
+              stroke,
+              widthScale: passes.first.$1,
+              reclip: identical(stroke, active) ? canvasRepaint : null,
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                for (var textIndex = 0;
+                    textIndex < textControllers.length;
+                    textIndex++)
+                  _canvasTextBlockPreview(textIndex),
+              ],
+            ),
+          ),
+      ],
+    );
     return Positioned.fill(
       key: key,
       child: IgnorePointer(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            for (var index = 0; index < passes.length; index++)
-              Opacity(
-                opacity: passes[index].$3,
-                child: ClipPath(
-                  clipBehavior: Clip.antiAlias,
-                  clipper: BlurStrokeClipper(
-                    stroke,
-                    widthScale: passes[index].$1,
-                    reclip: identical(stroke, active) ? canvasRepaint : null,
-                  ),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CustomPaint(
-                        key: ValueKey('blur-paper-$index'),
-                        painter: StrokePainter(
-                          const [],
-                          null,
-                          background: Color(widget.note.backgroundColor),
-                          pattern: paperPattern,
-                          paintStrokes: false,
-                        ),
-                      ),
-                      ImageFiltered(
-                        key: ValueKey('blur-content-$index'),
-                        imageFilter: ui.ImageFilter.blur(
-                          sigmaX: passes[index].$2,
-                          sigmaY: passes[index].$2,
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CustomPaint(
-                              key: ValueKey(
-                                'blur-strokes-$layerIndex-$index',
-                              ),
-                              painter: StrokePainter(
-                                priorStrokes,
-                                null,
-                                paintBackground: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (showText && textControllers.isNotEmpty)
-              ClipPath(
-                key: ValueKey('blur-sharp-text-$layerIndex'),
-                clipBehavior: Clip.antiAlias,
-                clipper: BlurStrokeClipper(
-                  stroke,
-                  widthScale: passes.first.$1,
-                  reclip: identical(stroke, active) ? canvasRepaint : null,
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    for (var textIndex = 0;
-                        textIndex < textControllers.length;
-                        textIndex++)
-                      _canvasTextBlockPreview(textIndex),
-                  ],
-                ),
-              ),
-          ],
-        ),
+        child:
+            identical(stroke, active) ? RepaintBoundary(child: layer) : layer,
       ),
     );
   }
@@ -2107,12 +2109,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   Positioned.fill(
                                     key: const Key('active-stroke-layer'),
                                     child: IgnorePointer(
-                                      child: CustomPaint(
-                                        painter: StrokePainter(
-                                          [active!],
-                                          null,
-                                          paintBackground: false,
-                                          repaint: canvasRepaint,
+                                      child: RepaintBoundary(
+                                        child: CustomPaint(
+                                          painter: StrokePainter(
+                                            [active!],
+                                            null,
+                                            paintBackground: false,
+                                            repaint: canvasRepaint,
+                                          ),
                                         ),
                                       ),
                                     ),

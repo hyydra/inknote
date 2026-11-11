@@ -30,20 +30,20 @@ class StrokeHistory {
   bool get canRedo => _redo.isNotEmpty;
 
   void record(List<Stroke> strokes) {
-    _undo.add(_cloneStrokes(strokes));
+    _undo.add(List<Stroke>.of(strokes));
     if (_undo.length > maxEntries) _undo.removeAt(0);
     _redo.clear();
   }
 
   List<Stroke>? undo(List<Stroke> current) {
     if (_undo.isEmpty) return null;
-    _redo.add(_cloneStrokes(current));
+    _redo.add(List<Stroke>.of(current));
     return _undo.removeLast();
   }
 
   List<Stroke>? redo(List<Stroke> current) {
     if (_redo.isEmpty) return null;
-    _undo.add(_cloneStrokes(current));
+    _undo.add(List<Stroke>.of(current));
     return _redo.removeLast();
   }
 
@@ -244,27 +244,3 @@ double _distanceToSegment(
     CanvasPoint(start.x + clamped * dx, start.y + clamped * dy),
   );
 }
-
-List<Stroke> _cloneStrokes(List<Stroke> strokes) => strokes
-    .map(
-      (stroke) => Stroke(
-        points: stroke.points
-            .map((point) => CanvasPoint(
-                  point.x,
-                  point.y,
-                  pressure: point.pressure,
-                  pressureMin: point.pressureMin,
-                  pressureMax: point.pressureMax,
-                  tilt: point.tilt,
-                  orientation: point.orientation,
-                ))
-            .toList(),
-        color: stroke.color,
-        width: stroke.width,
-        highlight: stroke.highlight,
-        blur: stroke.blur,
-        opacity: stroke.opacity,
-        pressureSensitive: stroke.pressureSensitive,
-      ),
-    )
-    .toList();

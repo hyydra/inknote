@@ -82,10 +82,16 @@ void main() {
 
   final history = StrokeHistory();
   final edited = [stroke(10, 10, 20, 20), stroke(30, 30, 40, 40)];
+  final originalStroke = edited.first;
   history.record(edited);
   edited.removeAt(0);
   final beforeDelete = history.undo(edited);
   expectEqual(beforeDelete!.length, 2, 'undo restores an erased stroke');
+  expectEqual(
+    identical(beforeDelete.first, originalStroke),
+    true,
+    'undo snapshots reuse unchanged stroke data',
+  );
   final afterDelete = history.redo(beforeDelete);
   expectEqual(afterDelete!.length, 1, 'redo restores the erased state');
   print('PASS undo and redo restore fixed-pixel erasing');
