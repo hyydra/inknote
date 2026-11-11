@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -16,10 +17,10 @@ enum SaveStage {
 
 class NoteStore {
   static final RegExp _safeNoteId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+  static final Map<String, Future<void>> _writeQueues = {};
 
   final NoteDirectoryProvider directoryProvider;
   final SaveStageHook? afterSaveStage;
-  Future<void> _saveQueue = Future<void>.value();
 
   NoteStore({required this.directoryProvider, this.afterSaveStage});
 
@@ -93,7 +94,11 @@ class NoteStore {
             '${primary.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
           );
         }
-        await _save(noteId, jsonEncode(selected.$2.toJson()));
+        await _queueForNote(
+          directory,
+          noteId,
+          () => _save(directory, noteId, jsonEncode(selected.$2.toJson())),
+        );
       }
       notes.add(selected.$2);
     }
@@ -102,16 +107,46 @@ class NoteStore {
     return notes;
   }
 
-  Future<void> save(Note note) {
+  Future<void> save(Note note) async {
     _validateNoteId(note.id);
     final encoded = jsonEncode(note.toJson());
-    final operation = _saveQueue.then((_) => _save(note.id, encoded));
-    _saveQueue = operation.then<void>((_) {}, onError: (_) {});
-    return operation;
+    final directory = await folder;
+    await _queueForNote(
+      directory,
+      note.id,
+      () => _save(directory, note.id, encoded),
+    );
   }
 
-  Future<void> _save(String noteId, String encoded) async {
-    final directory = await folder;
+  Future<void> _queueForNote(
+    Directory directory,
+    String noteId,
+    Future<void> Function() operation,
+  ) {
+    final filePath = File(
+      '${directory.path}${Platform.pathSeparator}$noteId.json',
+    ).absolute.path;
+    final key = Platform.isWindows ? filePath.toLowerCase() : filePath;
+    final previous = _writeQueues[key] ?? Future<void>.value();
+    final result = previous.then((_) => operation());
+    final settled = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    _writeQueues[key] = settled;
+    unawaited(settled.then((_) {
+      if (identical(_writeQueues[key], settled)) {
+        _writeQueues.remove(key);
+      }
+    }));
+    return result;
+  }
+
+  Future<void> _save(
+    Directory directory,
+    String noteId,
+    String encoded,
+  ) async {
     final primary = File('${directory.path}/$noteId.json');
     final temporary = File('${primary.path}.tmp');
     final backup = File('${primary.path}.bak');
@@ -148,12 +183,19 @@ class NoteStore {
   Future<void> delete(Note note) async {
     _validateNoteId(note.id);
     final directory = await folder;
-    for (final suffix in ['.json', '.json.tmp', '.json.bak', '.json.bak.tmp']) {
-      final file = File('${directory.path}/${note.id}$suffix');
-      if (await file.exists()) {
-        await file.delete();
+    await _queueForNote(directory, note.id, () async {
+      for (final suffix in [
+        '.json',
+        '.json.tmp',
+        '.json.bak',
+        '.json.bak.tmp'
+      ]) {
+        final file = File('${directory.path}/${note.id}$suffix');
+        if (await file.exists()) {
+          await file.delete();
+        }
       }
-    }
+    });
   }
 
   void _validateNoteId(String noteId) {

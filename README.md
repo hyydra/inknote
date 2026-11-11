@@ -21,11 +21,12 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 
 ## Highlights
 - Multiple local notes with typed text, checklists and editable drawing strokes. Drawing tools include pencil, pen, a yellow-default highlighter, pixel-blur brush, whole-stroke eraser and undo/redo.
-- A large canvas with a Hand tool for pan and zoom, plus stroke selection, movement and deletion at any zoom level.
+- A large canvas with direct two-finger pan and zoom, plus stroke selection, movement and deletion at any zoom level. No separate Hand mode is required.
+- Scrolling beyond the bottom automatically appends another continuous page, with a visible divider and page counter; the page count is saved with the note.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
-- On Android, the cloud-sync button selects a writable Google Drive folder through the system folder picker, and the folder can be reselected if access expires. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way, imports existing Pennino JSON notes, and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
-- Versioned JSON persistence in the application documents directory, with atomic replacement, a previous-version backup and recovery after interrupted writes.
+- On Android, the cloud-sync button selects a writable Google Drive location through the system folder picker. On Windows, it selects a Google Drive for Desktop root. Pennino then uses the same visible `Pennino/notes` folder on every device, imports legacy JSON files from the previously selected root, and automatically performs a two-way sync at startup and after each save. Matching note IDs are resolved by their latest update timestamp without requiring a Google Cloud API key.
+- Versioned JSON persistence in the local application documents `Pennino/notes` folder, with automatic migration from the former `notes` folder, atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background autosave for every editor change, with Saved, Unsaved, Saving and Save failed states.
 - Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds, receive focus immediately when added, and can be moved or resized with persistent handles; inactive borders remain hidden.
 - Fixed, non-scrolling bottom drawing and text toolbars keep every tool on screen. Drawing and text colours use compact dropdown palettes. Text controls include lists, font size, bold and indentation, and character selections retain their own bold, colour and size formatting.
@@ -60,7 +61,22 @@ Pushing a version tag such as `v0.4.6` builds and publishes three assets:
 
 Android releases require the four repository secrets documented in the release workflow: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Keep the original keystore backed up permanently; Android updates must use the same signing key.
 
+The in-app Android and Windows updaters require GitHub release assets to include a SHA-256 digest. Downloads are verified against that digest before they are handed to the platform installer.
+
+## Open-source software
+
+Pennino is MIT-licensed and builds on the following direct open-source projects. Their own licence terms continue to apply:
+
+- [Flutter](https://github.com/flutter/flutter) — cross-platform application framework (BSD-3-Clause).
+- [crypto](https://pub.dev/packages/crypto) — SHA-256 verification of downloaded updates (BSD-3-Clause).
+- [draw_your_image](https://github.com/chooyan-eng/draw_your_image) — stylus pressure/tilt data model and unsmoothed stroke path support (Apache-2.0).
+- [file_selector](https://github.com/flutter/packages/tree/main/packages/file_selector) — native file and folder selection (BSD-3-Clause).
+- [path_provider](https://github.com/flutter/packages/tree/main/packages/path_provider/path_provider) — platform application-data paths (BSD-3-Clause).
+- [uuid](https://github.com/Daegalus/dart-uuid) — note identifiers (MIT).
+
+The app's **Open-source software** menu lists these projects and opens Flutter's complete generated licence catalogue, including transitive dependencies.
+
 ## Tech
-Flutter/Dart UI, Kotlin native Android widget (RemoteViews), JSON files, `path_provider`, `uuid`.
+Flutter/Dart UI, Kotlin native Android widget (RemoteViews), pressure-aware `draw_your_image` stroke primitives, JSON files, `path_provider`, `uuid`.
 
 Android application ID for Play testing: `com.hyydra.pennino`.

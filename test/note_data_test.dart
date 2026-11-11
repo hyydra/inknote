@@ -80,6 +80,15 @@ Future<void> main() async {
       richStyle.fontSize, 30.0, 'rich text size survives serialization');
   print('PASS multiple text blocks survive serialization');
 
+  blocks.pageCount = 3;
+  final pagedRoundTrip = Note.fromJson(blocks.toJson());
+  expectEqual(
+    pagedRoundTrip.pageCount,
+    3,
+    'continuous page count survives serialization',
+  );
+  print('PASS continuous page count survives serialization');
+
   final blurStroke = Stroke.fromJson(Stroke(
     points: const [CanvasPoint(10, 20), CanvasPoint(30, 40)],
     color: 0x00000000,
@@ -90,6 +99,33 @@ Future<void> main() async {
   expectEqual(blurStroke.blur, true, 'pixel blur mask survives serialization');
   expectEqual(blurStroke.width, 44.0, 'pixel blur brush width survives');
   print('PASS pixel blur masks survive serialization');
+
+  final pressureStroke = Stroke.fromJson(Stroke(
+    points: const [
+      CanvasPoint(
+        12,
+        34,
+        pressure: 0.72,
+        pressureMin: 0.1,
+        pressureMax: 1.1,
+        tilt: 0.42,
+        orientation: 1.25,
+      ),
+    ],
+    color: 0xff112233,
+    width: 5,
+    highlight: false,
+    pressureSensitive: true,
+  ).toJson());
+  expectEqual(pressureStroke.pressureSensitive, true,
+      'pressure-aware stroke mode survives serialization');
+  expectEqual(pressureStroke.points.single.pressure, 0.72,
+      'stylus pressure survives serialization');
+  expectEqual(pressureStroke.points.single.tilt, 0.42,
+      'stylus tilt survives serialization');
+  expectEqual(pressureStroke.points.single.orientation, 1.25,
+      'stylus orientation survives serialization');
+  print('PASS stylus dynamics survive serialization');
 
   var rejectedFutureVersion = false;
   try {

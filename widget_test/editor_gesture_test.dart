@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/main.dart';
@@ -80,7 +81,8 @@ void main() {
 
     expect(note.strokes.last.blur, isTrue);
     expect(note.strokes.last.width, 44);
-    expect(find.byType(BackdropFilter), findsWidgets);
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsWidgets);
   });
 
   testWidgets('the editor fits a narrow Android phone viewport',
@@ -113,6 +115,120 @@ void main() {
       ),
       findsNWidgets(8),
     );
+  });
+
+  testWidgets('two fingers navigate without a separate Hand tool',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    expect(find.byTooltip('Hand'), findsNothing);
+    final viewerFinder = find.byType(InteractiveViewer);
+    final viewer = tester.widget<InteractiveViewer>(viewerFinder);
+    final origin = tester.getTopLeft(viewerFinder);
+    final first = await tester.createGesture(pointer: 1);
+    final second = await tester.createGesture(pointer: 2);
+    await first.down(origin + const Offset(180, 180));
+    await second.down(origin + const Offset(280, 280));
+    await first.moveTo(origin + const Offset(140, 140));
+    await second.moveTo(origin + const Offset(320, 320));
+    await tester.pump();
+
+    expect(viewer.transformationController!.value.getMaxScaleOnAxis(),
+        greaterThan(1));
+    expect(note.strokes, hasLength(1));
+    await first.up();
+    await second.up();
+  });
+
+  testWidgets('scrolling near the bottom appends a marked page',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final canvas = find.byType(InteractiveViewer);
+    final position = tester.getCenter(canvas);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: position,
+        scrollDelta: const Offset(0, 700),
+      ),
+    );
+    await tester.pump();
+
+    expect(note.pageCount, 2);
+    expect(find.text('1/2'), findsOneWidget);
+  });
+
+  testWidgets('eraser removes drawings without touching typed text',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'eraser-text-note',
+      title: 'Eraser text',
+      textBlocks: const ['Keep this text'],
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(100, 100), CanvasPoint(200, 100)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Eraser'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    await tester.pump();
+
+    expect(note.strokes, isEmpty);
+    expect(note.textBlocks.single, 'Keep this text');
+    expect(find.text('Keep this text'), findsOneWidget);
+  });
+
+  testWidgets('open-source repositories are disclosed in the app',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Note tools'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open-source software'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('github.com/chooyan-eng/draw_your_image'),
+        findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Licences'), findsOneWidget);
   });
 
   testWidgets('multiple transparent text blocks can be added', (tester) async {
@@ -164,6 +280,8 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    await tester.pump();
 
     Positioned block() => tester.widget<Positioned>(
           find.byKey(const ValueKey('canvas-text-block-0')),
@@ -194,8 +312,104 @@ void main() {
     await tester.pump();
     expect(
       find.byKey(const ValueKey('resize-text-block-0')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('resize-text-block-0')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a text block grows when new lines no longer fit',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
+    final initialHeight = tester.widget<Positioned>(blockFinder).height!;
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      List.generate(14, (index) => 'Line ${index + 1}').join('\n'),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<Positioned>(blockFinder).height,
+      greaterThan(initialHeight),
+    );
+  });
+
+  testWidgets('every drawing layer stays above blur layers', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'ordered-layers',
+      title: 'Ordered layers',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(20, 20), CanvasPoint(40, 40)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+        Stroke(
+          points: const [CanvasPoint(30, 30), CanvasPoint(60, 60)],
+          color: 0xff000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        Stroke(
+          points: const [CanvasPoint(40, 40), CanvasPoint(80, 80)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final stack = tester.widget<Stack>(
+      find.byKey(const Key('canvas-layer-stack')),
+    );
+    int layerIndex(Key key) =>
+        stack.children.indexWhere((child) => child.key == key);
+
+    expect(
+        layerIndex(const ValueKey('stroke-layer-0')), greaterThanOrEqualTo(0));
+    expect(layerIndex(const ValueKey('blur-layer-1')), greaterThanOrEqualTo(0));
+    expect(
+        layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
+    expect(
+      layerIndex(const ValueKey('blur-layer-1')),
+      lessThan(layerIndex(const ValueKey('stroke-layer-0'))),
+    );
+    expect(
+      layerIndex(const ValueKey('blur-layer-1')),
+      lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
+    );
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsNWidgets(8));
   });
 
   testWidgets('bold applies to selected text instead of the whole block',
