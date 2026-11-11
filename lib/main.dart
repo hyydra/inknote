@@ -246,6 +246,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   late final CanvasEditorController canvasEditor;
   final store = NoteStore(directoryProvider: noteDirectory);
   late final DriveSyncService syncService;
+  late final DriveSyncDebouncer driveSyncDebouncer;
 
   List<RichTextEditingController> get textControllers =>
       textBlockController.controllers;
@@ -265,6 +266,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         localNoteDirectory: noteDirectory,
       ),
     );
+    driveSyncDebouncer = DriveSyncDebouncer(service: syncService);
     textBlockController = TextBlockController(
       onChanged: _markChanged,
       onFocusChanged: () {
@@ -292,6 +294,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    driveSyncDebouncer.dispose();
     autosave.dispose();
     titleController.dispose();
     textBlockController.dispose();
@@ -309,7 +312,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       lastSelectionViewportPoint = null;
       selectionMoved = false;
       gestureHistoryRecorded = false;
-      unawaited(autosave.saveNow());
+      unawaited(
+        autosave.saveNow().whenComplete(driveSyncDebouncer.flush),
+      );
     }
   }
 
@@ -809,7 +814,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
-    syncService.syncInBackground(currentNoteId: widget.note.id);
+    driveSyncDebouncer.schedule(currentNoteId: widget.note.id);
   }
 
   void _syncCurrentInBackground() {
@@ -1087,6 +1092,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     try {
+      driveSyncDebouncer.cancel();
       var result = await syncService.sync(
         chooseFolder: chooseFolder,
         currentNoteId: widget.note.id,

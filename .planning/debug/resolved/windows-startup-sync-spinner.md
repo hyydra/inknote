@@ -18,7 +18,7 @@ updated: 2026-11-11
 - hypothesis: confirmed
 - test: background sync is paused while the local caller continues
 - expecting: local UI and atomic saves never wait for the provider
-- next_action: publish the 0.4.8 hotfix
+- next_action: publish the 0.4.9 hotfix
 - reasoning_checkpoint: the blocking awaits were removed from startup, library loading and autosave
 - tdd_checkpoint: regression test passed
 
@@ -30,6 +30,8 @@ updated: 2026-11-11
   observation: LibraryPage.refresh had the same blocking order; EditorPage._persist also awaited remote sync after the atomic local save.
 - timestamp: 2026-11-11T13:00:00+01:00
   observation: the paused-provider regression test, Flutter analysis, 17 editor widget tests and Windows release build passed.
+- timestamp: 2026-11-11T13:05:00+01:00
+  observation: automatic post-save Drive operations are debounced into one batch after eight seconds of editing inactivity and flushed on app backgrounding.
 
 ## Eliminated
 
@@ -39,6 +41,6 @@ updated: 2026-11-11
 ## Resolution
 
 - root_cause: UI-critical startup and save paths awaited an unbounded Google Drive for Desktop folder operation.
-- fix: load local data first and perform startup, library and post-save sync in a guarded background queue; apply only newer remote state.
+- fix: load local data first; debounce post-save Drive operations into eight-second batches; flush pending work on backgrounding; apply only newer remote state.
 - verification: flutter analyze; drive sync regression tests; 17 editor widget tests; Windows release build.
 - files_changed: lib/drive_sync_service.dart, lib/main.dart, test/drive_sync_service_test.dart
