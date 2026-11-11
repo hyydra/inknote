@@ -14,8 +14,19 @@ import 'autosave_controller.dart';
 import 'canvas_editing.dart';
 import 'note_data.dart';
 import 'note_store.dart';
+import 'rich_text_controller.dart';
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.5');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.4.6');
+
+abstract final class PenninoColors {
+  static const leather = Color(0xff15191d);
+  static const leatherRaised = Color(0xff20262b);
+  static const leatherInset = Color(0xff0d1013);
+  static const gold = Color(0xffd7a842);
+  static const paleGold = Color(0xfff0d38a);
+  static const steel = Color(0xffaeb5bc);
+  static const ink = Color(0xfff5f0e5);
+}
 
 class UpdateInfo {
   final String version;
@@ -172,8 +183,92 @@ class NotesApp extends StatelessWidget {
         title: 'Pennino',
         theme: ThemeData(
           useMaterial3: true,
-          colorSchemeSeed: const Color(0xff594fc8),
-          scaffoldBackgroundColor: const Color(0xfffaf9f6),
+          brightness: Brightness.dark,
+          colorScheme: const ColorScheme.dark(
+            primary: PenninoColors.gold,
+            onPrimary: PenninoColors.leatherInset,
+            primaryContainer: Color(0xff5b461c),
+            onPrimaryContainer: PenninoColors.paleGold,
+            secondary: PenninoColors.steel,
+            onSecondary: PenninoColors.leatherInset,
+            surface: PenninoColors.leather,
+            onSurface: PenninoColors.ink,
+            surfaceContainerLowest: PenninoColors.leatherInset,
+            surfaceContainerLow: Color(0xff191e22),
+            surfaceContainer: PenninoColors.leatherRaised,
+            surfaceContainerHigh: Color(0xff2a3035),
+            outline: Color(0xff6d675d),
+            outlineVariant: Color(0xff3f4346),
+          ),
+          scaffoldBackgroundColor: PenninoColors.leather,
+          dividerColor: const Color(0xff4a443b),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: PenninoColors.leatherRaised,
+            foregroundColor: PenninoColors.paleGold,
+            surfaceTintColor: Colors.transparent,
+            shadowColor: Colors.black,
+            elevation: 5,
+            titleTextStyle: TextStyle(
+              color: PenninoColors.ink,
+              fontSize: 21,
+              fontWeight: FontWeight.w600,
+              letterSpacing: .2,
+            ),
+          ),
+          cardTheme: CardThemeData(
+            color: PenninoColors.leatherRaised,
+            surfaceTintColor: Colors.transparent,
+            elevation: 3,
+            shadowColor: Colors.black,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: const BorderSide(color: Color(0xff4b4740)),
+            ),
+          ),
+          chipTheme: ChipThemeData(
+            backgroundColor: PenninoColors.leatherRaised,
+            selectedColor: const Color(0xff5b461c),
+            checkmarkColor: PenninoColors.paleGold,
+            side: const BorderSide(color: Color(0xff575149)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+            labelStyle: const TextStyle(color: PenninoColors.ink),
+          ),
+          floatingActionButtonTheme: const FloatingActionButtonThemeData(
+            backgroundColor: PenninoColors.gold,
+            foregroundColor: PenninoColors.leatherInset,
+            elevation: 6,
+          ),
+          popupMenuTheme: PopupMenuThemeData(
+            color: PenninoColors.leatherRaised,
+            surfaceTintColor: Colors.transparent,
+            elevation: 8,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: const BorderSide(color: Color(0xff5a544b)),
+            ),
+          ),
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: PenninoColors.leatherInset,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xff5a544b)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(
+                color: PenninoColors.gold,
+                width: 1.4,
+              ),
+            ),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              foregroundColor: PenninoColors.paleGold,
+            ),
+          ),
         ),
         home: const LauncherCanvasPage(),
       );
@@ -324,7 +419,16 @@ class _LibraryPageState extends State<LibraryPage> {
       );
 }
 
-enum DrawTool { hand, text, select, pencil, pen, highlighter, eraser }
+enum DrawTool {
+  hand,
+  text,
+  select,
+  pencil,
+  pen,
+  highlighter,
+  eraser,
+  blur,
+}
 
 enum PaperPattern { plain, lined, grid, dots }
 
@@ -340,7 +444,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('notes/widget');
   static const syncChannel = MethodChannel('notes/sync');
   late final TextEditingController titleController;
-  final List<TextEditingController> textControllers = [];
+  final List<RichTextEditingController> textControllers = [];
   final List<FocusNode> textFocusNodes = [];
   final List<TextBlockFormat> textFormats = [];
   int activeTextIndex = 0;
@@ -349,6 +453,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       TransformationController();
   DrawTool tool = DrawTool.pen;
   Color strokeColor = Colors.blue.shade800;
+  Color highlighterColor = Colors.yellow;
   double width = 3;
   Stroke? active;
   bool showText = true;
@@ -414,10 +519,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (!applyingExternalChange) autosave.markChanged();
   }
 
-  TextEditingController _textController(String text) {
-    final controller = TextEditingController(text: text);
+  RichTextEditingController _textController(
+    String text,
+    List<TextStyleRange> styles,
+  ) {
+    final controller = RichTextEditingController(text: text, styles: styles);
     controller.addListener(_markChanged);
     return controller;
+  }
+
+  FocusNode _textFocusNode() {
+    final node = FocusNode();
+    node.addListener(() {
+      if (mounted) setState(() {});
+    });
+    return node;
   }
 
   void _replaceTextControllers(
@@ -430,17 +546,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     for (final focusNode in textFocusNodes) {
       focusNode.dispose();
     }
-    textControllers
-      ..clear()
-      ..addAll(blocks.map(_textController));
-    textFocusNodes
-      ..clear()
-      ..addAll(List.generate(textControllers.length, (_) => FocusNode()));
+    final savedBlocks = blocks.toList();
     final savedFormats = formats?.toList() ?? const <TextBlockFormat>[];
     textFormats
       ..clear()
       ..addAll(List.generate(
-        textControllers.length,
+        savedBlocks.length,
         (index) => index < savedFormats.length
             ? TextBlockFormat(
                 bold: savedFormats[index].bold,
@@ -450,9 +561,29 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 y: savedFormats[index].y,
                 width: savedFormats[index].width,
                 height: savedFormats[index].height,
+                styles: savedFormats[index]
+                    .styles
+                    .map((style) => TextStyleRange(
+                          start: style.start,
+                          end: style.end,
+                          bold: style.bold,
+                          color: style.color,
+                          fontSize: style.fontSize,
+                        ))
+                    .toList(),
               )
             : TextBlockFormat(y: 48 + index * 184),
       ));
+    textControllers
+      ..clear()
+      ..addAll(List.generate(
+        savedBlocks.length,
+        (index) =>
+            _textController(savedBlocks[index], textFormats[index].styles),
+      ));
+    textFocusNodes
+      ..clear()
+      ..addAll(List.generate(textControllers.length, (_) => _textFocusNode()));
     activeTextIndex = textControllers.isEmpty
         ? 0
         : activeTextIndex.clamp(0, textControllers.length - 1);
@@ -462,12 +593,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     setState(() {
       showText = true;
       tool = DrawTool.text;
-      textControllers.add(_textController(''));
-      textFocusNodes.add(FocusNode());
-      textFormats.add(TextBlockFormat(
+      final format = TextBlockFormat(
         x: 48 + (textControllers.length % 3) * 24,
-        y: 48 + (textControllers.length - 1) * 184,
-      ));
+        y: 48 + textControllers.length * 184,
+      );
+      textFormats.add(format);
+      textControllers.add(_textController('', format.styles));
+      textFocusNodes.add(_textFocusNode());
       activeTextIndex = textControllers.length - 1;
     });
     _markChanged();
@@ -489,9 +621,53 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     _markChanged();
   }
 
-  TextEditingController? get _activeTextController => textControllers.isEmpty
+  RichTextEditingController? get _activeTextController => textControllers
+          .isEmpty
       ? null
       : textControllers[activeTextIndex.clamp(0, textControllers.length - 1)];
+
+  Color get _activeStrokeColor =>
+      tool == DrawTool.highlighter ? highlighterColor : strokeColor;
+
+  void _setActiveStrokeColor(Color color) {
+    setState(() {
+      if (tool == DrawTool.highlighter) {
+        highlighterColor = color;
+      } else {
+        strokeColor = color;
+      }
+    });
+  }
+
+  void _setTextFontSize(double size) {
+    final controller = _activeTextController;
+    if (controller == null) return;
+    final selection = controller.selection;
+    setState(() {
+      if (selection.isValid && !selection.isCollapsed) {
+        controller.applyStyle(selection, fontSize: size);
+      } else {
+        textFormats[activeTextIndex].fontSize = size;
+      }
+    });
+    _markChanged();
+  }
+
+  void _toggleTextBold() {
+    final controller = _activeTextController;
+    if (controller == null) return;
+    final format = textFormats[activeTextIndex];
+    final selection = controller.selection;
+    setState(() {
+      if (selection.isValid && !selection.isCollapsed) {
+        final current = controller.selectedBold(selection) ?? format.bold;
+        controller.applyStyle(selection, bold: !current);
+      } else {
+        format.bold = !format.bold;
+      }
+    });
+    _markChanged();
+  }
 
   void _toggleLinePrefix(String prefix) {
     final controller = _activeTextController;
@@ -575,36 +751,58 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _chooseTextColor() async {
+  static const _paletteColors = <Color>[
+    Colors.black,
+    Colors.white,
+    Colors.yellow,
+    Colors.red,
+    Colors.orange,
+    Colors.green,
+    Colors.blue,
+    Colors.purple,
+  ];
+
+  String _colorName(Color color) => switch (color.toARGB32()) {
+        0xff000000 => 'Black',
+        0xffffffff => 'White',
+        0xffffff00 => 'Yellow',
+        0xfff44336 => 'Red',
+        0xffff9800 => 'Orange',
+        0xff4caf50 => 'Green',
+        0xff2196f3 => 'Blue',
+        0xff9c27b0 => 'Purple',
+        _ => 'Colour',
+      };
+
+  List<PopupMenuEntry<Color>> _colorMenuItems(Color selected) => [
+        for (final color in _paletteColors)
+          PopupMenuItem(
+            value: color,
+            child: Row(
+              children: [
+                Icon(
+                  color == selected ? Icons.check_circle : Icons.circle,
+                  color: color,
+                ),
+                const SizedBox(width: 12),
+                Text(_colorName(color)),
+              ],
+            ),
+          ),
+      ];
+
+  void _setTextColor(Color selected) {
     if (textControllers.isEmpty) return;
-    final colors = [
-      Colors.black,
-      Colors.red,
-      Colors.orange,
-      Colors.green,
-      Colors.blue,
-      Colors.purple,
-    ];
-    final selected = await showDialog<Color>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Text colour'),
-        content: Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            for (final color in colors)
-              InkWell(
-                onTap: () => Navigator.pop(dialogContext, color),
-                borderRadius: BorderRadius.circular(24),
-                child: CircleAvatar(backgroundColor: color),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (selected == null || !mounted) return;
-    setState(() => textFormats[activeTextIndex].color = selected.toARGB32());
+    final controller = _activeTextController;
+    if (controller == null) return;
+    final selection = controller.selection;
+    setState(() {
+      if (selection.isValid && !selection.isCollapsed) {
+        controller.applyStyle(selection, color: selected.toARGB32());
+      } else {
+        textFormats[activeTextIndex].color = selected.toARGB32();
+      }
+    });
     _markChanged();
   }
 
@@ -649,13 +847,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       selectedStrokes.clear();
       active = Stroke(
         points: [scenePoint],
-        color: strokeColor.toARGB32(),
+        color: _activeStrokeColor.toARGB32(),
         width: tool == DrawTool.highlighter
             ? 22
-            : tool == DrawTool.pencil
-                ? 2
-                : width,
+            : tool == DrawTool.blur
+                ? 44
+                : tool == DrawTool.pencil
+                    ? 2
+                    : width,
         highlight: tool == DrawTool.highlighter,
+        blur: tool == DrawTool.blur,
         opacity: tool == DrawTool.pencil ? 0.58 : 1,
       );
     });
@@ -766,6 +967,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               y: format.y,
               width: format.width,
               height: format.height,
+              styles: format.styles
+                  .map((style) => TextStyleRange(
+                        start: style.start,
+                        end: style.end,
+                        bold: style.bold,
+                        color: style.color,
+                        fontSize: style.fontSize,
+                      ))
+                  .toList(),
             ))
         .toList();
     widget.note.updated = DateTime.now();
@@ -1075,6 +1285,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       y: format.y,
                       width: format.width,
                       height: format.height,
+                      styles: format.styles
+                          .map((style) => TextStyleRange(
+                                start: style.start,
+                                end: style.end,
+                                bold: style.bold,
+                                color: style.color,
+                                fontSize: style.fontSize,
+                              ))
+                          .toList(),
                     ))
                 .toList();
             widget.note.updated = syncedCurrent.updated;
@@ -1150,6 +1369,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (DrawTool.pen, Icons.edit, 'Pen'),
       (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
       (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+      (DrawTool.blur, Icons.blur_on, 'Blur'),
     ];
     return SizedBox(
       key: const Key('android-drawing-toolbar'),
@@ -1184,29 +1404,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     )
                   : PopupMenuButton<Color>(
                       tooltip: 'Drawing colour',
-                      icon: Icon(Icons.circle, color: strokeColor),
-                      onSelected: (color) =>
-                          setState(() => strokeColor = color),
-                      itemBuilder: (_) => [
-                        for (final color in const [
-                          Colors.black,
-                          Colors.blue,
-                          Colors.red,
-                          Colors.green,
-                          Colors.orange,
-                          Colors.purple,
-                        ])
-                          PopupMenuItem(
-                            value: color,
-                            child: Row(
-                              children: [
-                                Icon(Icons.circle, color: color),
-                                const SizedBox(width: 12),
-                                Text(color == strokeColor ? 'Selected' : 'Use'),
-                              ],
-                            ),
-                          ),
-                      ],
+                      icon: Icon(Icons.circle, color: _activeStrokeColor),
+                      onSelected: _setActiveStrokeColor,
+                      itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
                     ),
             ),
           ],
@@ -1252,12 +1452,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 PopupMenuItem(value: 'bullet', child: Text('Bulleted list')),
               ],
             )),
-            slot(IconButton(
+            slot(PopupMenuButton<Color>(
               tooltip: 'Text colour',
-              onPressed: canFormat ? _chooseTextColor : null,
+              enabled: canFormat,
+              onSelected: _setTextColor,
               icon: Icon(
                 Icons.format_color_text,
                 color: format == null ? null : Color(format.color),
+              ),
+              itemBuilder: (_) => _colorMenuItems(
+                format == null ? Colors.black : Color(format.color),
               ),
             )),
             slot(PopupMenuButton<double>(
@@ -1267,10 +1471,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 format == null ? 'Aa' : '${format.fontSize.round()}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              onSelected: (size) {
-                setState(() => format!.fontSize = size);
-                _markChanged();
-              },
+              onSelected: _setTextFontSize,
               itemBuilder: (_) => [
                 for (final size in const [14.0, 18.0, 20.0, 24.0, 30.0, 36.0])
                   PopupMenuItem(value: size, child: Text('${size.round()}')),
@@ -1279,12 +1480,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             slot(IconButton(
               tooltip: 'Bold',
               isSelected: format?.bold ?? false,
-              onPressed: canFormat
-                  ? () {
-                      setState(() => format!.bold = !format.bold);
-                      _markChanged();
-                    }
-                  : null,
+              onPressed: canFormat ? _toggleTextBold : null,
               icon: const Icon(Icons.format_bold),
             )),
             slot(PopupMenuButton<bool>(
@@ -1305,8 +1501,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _canvasTextBlock(int index) {
     final format = textFormats[index];
-    final selected = activeTextIndex == index;
-    final scale = math.max(0.001, canvasTransform.scale);
     return Positioned(
       key: ValueKey('canvas-text-block-$index'),
       left: format.x,
@@ -1319,123 +1513,190 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           activeTextIndex = index;
           tool = DrawTool.text;
         }),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            border: selected
-                ? Border.all(color: Theme.of(context).colorScheme.primary)
-                : null,
-            borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 28),
+          child: TextField(
+            key: ValueKey('canvas-text-field-$index'),
+            controller: textControllers[index],
+            focusNode: textFocusNodes[index],
+            onTap: () {
+              setState(() {
+                activeTextIndex = index;
+                tool = DrawTool.text;
+              });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _toggleChecklistAtSelection(index);
+              });
+            },
+            expands: true,
+            minLines: null,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            textAlignVertical: TextAlignVertical.top,
+            style: TextStyle(
+              color: Color(format.color),
+              fontSize: format.fontSize,
+              fontWeight: format.bold ? FontWeight.bold : FontWeight.normal,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Text block ${index + 1}',
+              filled: false,
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            ),
           ),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                top: 28,
-                child: TextField(
-                  key: ValueKey('canvas-text-field-$index'),
-                  controller: textControllers[index],
-                  focusNode: textFocusNodes[index],
-                  onTap: () {
-                    setState(() {
-                      activeTextIndex = index;
-                      tool = DrawTool.text;
-                    });
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) _toggleChecklistAtSelection(index);
-                    });
-                  },
-                  expands: true,
-                  minLines: null,
-                  maxLines: null,
-                  keyboardType: TextInputType.multiline,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: TextStyle(
-                    color: Color(format.color),
-                    fontSize: format.fontSize,
-                    fontWeight:
-                        format.bold ? FontWeight.bold : FontWeight.normal,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Text block ${index + 1}',
-                    filled: false,
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                  ),
+        ),
+      ),
+    );
+  }
+
+  Widget _canvasTextBlockControls(int index) {
+    final format = textFormats[index];
+    final selected = activeTextIndex == index && textFocusNodes[index].hasFocus;
+    final scale = math.max(0.001, canvasTransform.scale);
+    return Positioned(
+      key: ValueKey('canvas-text-block-controls-$index'),
+      left: format.x,
+      top: format.y,
+      width: format.width,
+      height: format.height,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.transparent,
+                  border: selected
+                      ? Border.all(color: Theme.of(context).colorScheme.primary)
+                      : null,
+                  borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              if (selected) ...[
-                Positioned(
-                  left: 0,
-                  right: 56,
-                  top: 0,
-                  height: 28,
-                  child: Listener(
-                    key: ValueKey('move-text-block-$index'),
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (_) => setState(() {
-                      activeTextIndex = index;
-                      tool = DrawTool.text;
-                    }),
-                    onPointerMove: (event) => setState(() {
-                      format.x = math.max(0, format.x + event.delta.dx / scale);
-                      format.y = math.max(0, format.y + event.delta.dy / scale);
-                    }),
-                    onPointerUp: (_) => _markChanged(),
-                    onPointerCancel: (_) => _markChanged(),
-                    child: const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: EdgeInsets.only(left: 6),
-                        child: Icon(Icons.drag_indicator, size: 20),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 56,
+            top: 0,
+            height: 28,
+            child: Listener(
+              key: ValueKey('move-text-block-$index'),
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) => setState(() {
+                activeTextIndex = index;
+                tool = DrawTool.text;
+              }),
+              onPointerMove: (event) => setState(() {
+                format.x = math.max(0, format.x + event.delta.dx / scale);
+                format.y = math.max(0, format.y + event.delta.dy / scale);
+              }),
+              onPointerUp: (_) => _markChanged(),
+              onPointerCancel: (_) => _markChanged(),
+              child: const Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.only(left: 6),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: PenninoColors.leatherRaised,
+                      borderRadius: BorderRadius.all(Radius.circular(5)),
+                      border: Border.fromBorderSide(
+                        BorderSide(color: PenninoColors.gold),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black38,
+                          blurRadius: 3,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: SizedBox(
+                      width: 28,
+                      height: 24,
+                      child: Icon(
+                        Icons.drag_indicator,
+                        size: 18,
+                        color: PenninoColors.paleGold,
                       ),
                     ),
                   ),
                 ),
-                Positioned(
-                  right: 24,
-                  top: 0,
-                  width: 28,
-                  height: 28,
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    tooltip: 'Delete text block',
-                    onPressed: () => removeTextBlock(index),
-                    icon: const Icon(Icons.close, size: 18),
+              ),
+            ),
+          ),
+          if (selected)
+            Positioned(
+              right: 24,
+              top: 0,
+              width: 28,
+              height: 28,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                tooltip: 'Delete text block',
+                onPressed: () => removeTextBlock(index),
+                icon: const Icon(Icons.close, size: 18),
+              ),
+            ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            width: 32,
+            height: 32,
+            child: Listener(
+              key: ValueKey('resize-text-block-$index'),
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) => setState(() {
+                activeTextIndex = index;
+                tool = DrawTool.text;
+              }),
+              onPointerMove: (event) => setState(() {
+                format.width = math.max(
+                  140,
+                  format.width + event.delta.dx / scale,
+                );
+                format.height = math.max(
+                  90,
+                  format.height + event.delta.dy / scale,
+                );
+              }),
+              onPointerUp: (_) => _markChanged(),
+              onPointerCancel: (_) => _markChanged(),
+              child: const Align(
+                alignment: Alignment.bottomRight,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: PenninoColors.leatherRaised,
+                    borderRadius: BorderRadius.all(Radius.circular(5)),
+                    border: Border.fromBorderSide(
+                      BorderSide(color: PenninoColors.gold),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black38,
+                        blurRadius: 3,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
                   ),
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  width: 32,
-                  height: 32,
-                  child: Listener(
-                    key: ValueKey('resize-text-block-$index'),
-                    behavior: HitTestBehavior.opaque,
-                    onPointerMove: (event) => setState(() {
-                      format.width = math.max(
-                        140,
-                        format.width + event.delta.dx / scale,
-                      );
-                      format.height = math.max(
-                        90,
-                        format.height + event.delta.dy / scale,
-                      );
-                    }),
-                    onPointerUp: (_) => _markChanged(),
-                    onPointerCancel: (_) => _markChanged(),
-                    child: const Align(
-                      alignment: Alignment.bottomRight,
-                      child: Icon(Icons.open_in_full, size: 18),
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: Icon(
+                      Icons.open_in_full,
+                      size: 16,
+                      color: PenninoColors.paleGold,
                     ),
                   ),
                 ),
-              ],
-            ],
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1655,6 +1916,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                           'Highlighter'
                         ),
                         (DrawTool.eraser, Icons.auto_fix_normal, 'Eraser'),
+                        (DrawTool.blur, Icons.blur_on, 'Blur'),
                       ])
                         Padding(
                           padding: const EdgeInsets.all(4),
@@ -1692,31 +1954,22 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             onPressed: deleteSelection,
                           ),
                         ),
-                      for (final c in [
-                        Colors.black,
-                        Colors.blue,
-                        Colors.red,
-                        Colors.green,
-                        Colors.orange,
-                        Colors.purple,
-                      ])
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: InkWell(
-                            onTap: () => setState(() => strokeColor = c),
-                            child: CircleAvatar(
-                              radius: 15,
-                              backgroundColor: c,
-                              child: strokeColor == c
-                                  ? const Icon(
-                                      Icons.check,
-                                      size: 17,
-                                      color: Colors.white,
-                                    )
-                                  : null,
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: PopupMenuButton<Color>(
+                          tooltip: 'Drawing colour',
+                          onSelected: _setActiveStrokeColor,
+                          itemBuilder: (_) =>
+                              _colorMenuItems(_activeStrokeColor),
+                          child: Chip(
+                            avatar: Icon(
+                              Icons.circle,
+                              color: _activeStrokeColor,
                             ),
+                            label: const Text('Colour'),
                           ),
                         ),
+                      ),
                     ],
                   ),
                 ),
@@ -1840,6 +2093,30 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         index < textControllers.length;
                                         index++)
                                       _canvasTextBlock(index),
+                                  for (final blurStroke in [
+                                    ...widget.note.strokes
+                                        .where((stroke) => stroke.blur),
+                                    if (active?.blur ?? false) active!,
+                                  ])
+                                    Positioned.fill(
+                                      child: ClipPath(
+                                        clipper: BlurStrokeClipper(blurStroke),
+                                        child: BackdropFilter(
+                                          filter: ui.ImageFilter.blur(
+                                            sigmaX: 12,
+                                            sigmaY: 12,
+                                          ),
+                                          child: ColoredBox(
+                                            color: Color(0x01ffffff),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  if (showText)
+                                    for (var index = 0;
+                                        index < textControllers.length;
+                                        index++)
+                                      _canvasTextBlockControls(index),
                                 ],
                               ),
                             ),
@@ -1904,7 +2181,7 @@ class StrokePainter extends CustomPainter {
       }
     }
     for (final s in [...strokes, if (active != null) active!]) {
-      if (s.points.isEmpty) continue;
+      if (s.points.isEmpty || s.blur) continue;
       final p = Paint()
         ..color =
             Color(s.color).withValues(alpha: s.highlight ? 0.32 : s.opacity)
@@ -1949,4 +2226,44 @@ class StrokePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StrokePainter old) => true;
+}
+
+class BlurStrokeClipper extends CustomClipper<Path> {
+  final Stroke stroke;
+
+  const BlurStrokeClipper(this.stroke);
+
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    if (stroke.points.isEmpty) return path;
+    final radius = stroke.width / 2;
+    void addBrush(CanvasPoint point) {
+      path.addOval(Rect.fromCircle(
+        center: Offset(point.x, point.y),
+        radius: radius,
+      ));
+    }
+
+    addBrush(stroke.points.first);
+    for (var index = 1; index < stroke.points.length; index++) {
+      final from = stroke.points[index - 1];
+      final to = stroke.points[index];
+      final dx = to.x - from.x;
+      final dy = to.y - from.y;
+      final distance = math.sqrt(dx * dx + dy * dy);
+      final steps = math.max(1, (distance / math.max(2, radius / 2)).ceil());
+      for (var step = 1; step <= steps; step++) {
+        final amount = step / steps;
+        addBrush(CanvasPoint(
+          from.x + dx * amount,
+          from.y + dy * amount,
+        ));
+      }
+    }
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant BlurStrokeClipper oldClipper) => true;
 }

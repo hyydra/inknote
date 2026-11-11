@@ -112,6 +112,7 @@ bool translateSelectedFromViewportDelta(
       color: stroke.color,
       width: stroke.width,
       highlight: stroke.highlight,
+      blur: stroke.blur,
       opacity: stroke.opacity,
     );
     changed = true;
@@ -188,6 +189,7 @@ List<Stroke> _cloneStrokes(List<Stroke> strokes) => strokes
         color: stroke.color,
         width: stroke.width,
         highlight: stroke.highlight,
+        blur: stroke.blur,
         opacity: stroke.opacity,
       ),
     )
