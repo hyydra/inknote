@@ -2,7 +2,7 @@
 
 - Goal: Replace persisted vector strokes with per-page raster drawings, remove drawing undo/redo, and keep text above drawing layers.
 - Owner: Copilot.
-- State: Committed as `de3c205`; push in progress, not released.
+- State: Committed as `de3c205` and pushed; release v0.4.17 is in progress.
 
 ## Log
 
@@ -13,16 +13,16 @@
 - Text blocks and controls render above raster drawings, blur, page dividers, and page labels. The update banner now uses `onSecondaryContainer` for readable text, icon, and button colors.
 - An initial bounded erase layer cropped pixels outside its brush bounds; the raster tests caught it. The corrected `BlendMode.src` composite preserves untouched pixels. An indeterminate progress bar also prevented `pumpAndSettle`; replaced it with a static accessible status strip.
 - `flutter analyze` and the full `flutter test` suite pass. `flutter build windows --release` and `flutter build apk --debug` both pass.
-- The user has now requested commit and push. Push only the feature branch; no version bump or release tag is in scope. Unrelated untracked `.codex/`, `reports/`, and `research_notes/` remain untouched.
-- Committed the verified migration as `de3c205` (`feat: rasterize canvas drawings`); pushing this branch is the remaining step.
+- The user requested commit and push; committed the verified migration as `de3c205` (`feat: rasterize canvas drawings`) and handoff update as `ff84916`. Pushed the feature branch; remote HEAD matches `ff84916`.
+- Unrelated untracked `.codex/`, `reports/`, and `research_notes/` remain untouched.
 
 ## Running now
 
-- Push `codex/persistent-toolbar-text-first`; then verify the remote head matches the local commit.
+- Verify the v0.4.17 GitHub release workflow and published installers.
 
 ## Next
 
-- Do not create a release tag unless the user separately requests a release.
+- Do not modify the unrelated untracked folders.
 
 ## Don't repeat
 
