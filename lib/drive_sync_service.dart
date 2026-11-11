@@ -155,6 +155,26 @@ class DriveSyncService {
 
   DriveSyncService({required this.store, required this.backend});
 
+  /// Starts a best-effort sync without making local loading or saving wait for
+  /// a cloud provider. Manual sync continues to use [sync] so it can report a
+  /// result to the user.
+  void syncInBackground({
+    String? currentNoteId,
+    void Function(DriveSyncResult result)? onResult,
+    void Function(Object error, StackTrace stackTrace)? onError,
+  }) {
+    unawaited(
+      sync(currentNoteId: currentNoteId).then(
+        (result) {
+          if (result != null) onResult?.call(result);
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          onError?.call(error, stackTrace);
+        },
+      ),
+    );
+  }
+
   Future<DriveSyncResult?> sync({
     bool chooseFolder = false,
     String? currentNoteId,

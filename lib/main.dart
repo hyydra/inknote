@@ -50,18 +50,11 @@ class LauncherCanvasPage extends StatefulWidget {
 class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   static const launcherNoteId = 'launcher-canvas';
   final store = NoteStore(directoryProvider: noteDirectory);
-  late final DriveSyncService syncService;
   Note? note;
 
   @override
   void initState() {
     super.initState();
-    syncService = DriveSyncService(
-      store: store,
-      backend: createPlatformSyncBackend(
-        localNoteDirectory: noteDirectory,
-      ),
-    );
     _load();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(UpdateService.prompt(context, automatic: true));
@@ -69,11 +62,6 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   }
 
   Future<void> _load() async {
-    try {
-      await syncService.sync();
-    } catch (_) {
-      // Local notes remain available when Drive is offline.
-    }
     final notes = await store.load();
     final existing = notes.where((item) => item.id == launcherNoteId);
     final loaded = existing.isEmpty
@@ -85,7 +73,9 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
             strokes: [],
           )
         : existing.first;
-    if (mounted) setState(() => note = loaded);
+    if (mounted) {
+      setState(() => note = loaded);
+    }
   }
 
   @override
@@ -122,17 +112,21 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> refresh() async {
-    try {
-      await syncService.sync();
-    } catch (_) {
-      // Showing local notes is more important than blocking on Drive.
-    }
     final loaded = await store.load();
-    if (mounted)
+    if (mounted) {
       setState(() {
         notes = loaded;
         loading = false;
       });
+      syncService.syncInBackground(
+        onResult: (_) => _reloadAfterBackgroundSync(),
+      );
+    }
+  }
+
+  Future<void> _reloadAfterBackgroundSync() async {
+    final loaded = await store.load();
+    if (mounted) setState(() => notes = loaded);
   }
 
   Future<void> openNote([Note? note]) async {
@@ -290,6 +284,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       widget.note.textBlocks,
       formats: widget.note.textBlockFormats,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncCurrentInBackground();
+    });
   }
 
   @override
@@ -812,11 +809,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
-    try {
-      await syncService.sync(currentNoteId: widget.note.id);
-    } catch (_) {
-      // The local atomic save is successful even when Drive is unavailable.
-    }
+    syncService.syncInBackground(currentNoteId: widget.note.id);
+  }
+
+  void _syncCurrentInBackground() {
+    syncService.syncInBackground(
+      currentNoteId: widget.note.id,
+      onResult: (result) {
+        if (!mounted || autosave.status != SaveStatus.saved) return;
+        final syncedCurrent = result.currentNote;
+        if (syncedCurrent != null &&
+            syncedCurrent.updated.isAfter(widget.note.updated)) {
+          _applySyncedNote(syncedCurrent);
+        }
+      },
+    );
   }
 
   Future<void> save({bool showMessage = true}) async {
@@ -1008,6 +1015,55 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     _markChanged();
   }
 
+  void _applySyncedNote(Note syncedCurrent) {
+    if (identical(syncedCurrent, widget.note)) return;
+    applyingExternalChange = true;
+    try {
+      setState(() {
+        widget.note.title = syncedCurrent.title;
+        widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
+        widget.note.textBlockFormats = syncedCurrent.textBlockFormats
+            .map((format) => TextBlockFormat(
+                  bold: format.bold,
+                  color: format.color,
+                  fontSize: format.fontSize,
+                  x: format.x,
+                  y: format.y,
+                  width: format.width,
+                  height: format.height,
+                  styles: format.styles
+                      .map((style) => TextStyleRange(
+                            start: style.start,
+                            end: style.end,
+                            bold: style.bold,
+                            color: style.color,
+                            fontSize: style.fontSize,
+                          ))
+                      .toList(),
+                ))
+            .toList();
+        widget.note.updated = syncedCurrent.updated;
+        widget.note.strokes = syncedCurrent.strokes;
+        widget.note.tasks = syncedCurrent.tasks;
+        widget.note.backgroundColor = syncedCurrent.backgroundColor;
+        widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
+        widget.note.pageCount = syncedCurrent.pageCount;
+        selectedStrokes.clear();
+        lastSelectionViewportPoint = null;
+        selectionMoved = false;
+        gestureHistoryRecorded = false;
+        canvasEditor.clearHistory();
+        titleController.text = syncedCurrent.title;
+        textBlockController.replace(
+          syncedCurrent.textBlocks,
+          formats: syncedCurrent.textBlockFormats,
+        );
+      });
+    } finally {
+      applyingExternalChange = false;
+    }
+  }
+
   Future<void> syncDrive({bool chooseFolder = false}) async {
     if (!Platform.isAndroid && !Platform.isWindows) {
       if (mounted) {
@@ -1043,53 +1099,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       }
       if (result == null) return;
       final syncedCurrent = result.currentNote;
-      if (syncedCurrent != null && !identical(syncedCurrent, widget.note)) {
-        applyingExternalChange = true;
-        try {
-          setState(() {
-            widget.note.title = syncedCurrent.title;
-            widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
-            widget.note.textBlockFormats = syncedCurrent.textBlockFormats
-                .map((format) => TextBlockFormat(
-                      bold: format.bold,
-                      color: format.color,
-                      fontSize: format.fontSize,
-                      x: format.x,
-                      y: format.y,
-                      width: format.width,
-                      height: format.height,
-                      styles: format.styles
-                          .map((style) => TextStyleRange(
-                                start: style.start,
-                                end: style.end,
-                                bold: style.bold,
-                                color: style.color,
-                                fontSize: style.fontSize,
-                              ))
-                          .toList(),
-                    ))
-                .toList();
-            widget.note.updated = syncedCurrent.updated;
-            widget.note.strokes = syncedCurrent.strokes;
-            widget.note.tasks = syncedCurrent.tasks;
-            widget.note.backgroundColor = syncedCurrent.backgroundColor;
-            widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
-            widget.note.pageCount = syncedCurrent.pageCount;
-            selectedStrokes.clear();
-            lastSelectionViewportPoint = null;
-            selectionMoved = false;
-            gestureHistoryRecorded = false;
-            canvasEditor.clearHistory();
-            titleController.text = syncedCurrent.title;
-            textBlockController.replace(
-              syncedCurrent.textBlocks,
-              formats: syncedCurrent.textBlockFormats,
-            );
-          });
-        } finally {
-          applyingExternalChange = false;
-        }
-      }
+      if (syncedCurrent != null) _applySyncedNote(syncedCurrent);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
