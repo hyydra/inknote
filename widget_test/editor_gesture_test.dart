@@ -5,6 +5,7 @@ import 'package:notes_app/canvas_painter.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
 import 'package:notes_app/rich_text_controller.dart';
+import 'package:notes_app/update_service.dart';
 
 Note noteWithStroke() => Note(
       id: 'gesture-note',
@@ -213,7 +214,7 @@ void main() {
       updated: DateTime.utc(2026, 11, 11),
       strokes: [
         Stroke(
-          points: const [CanvasPoint(100, 100), CanvasPoint(200, 100)],
+          points: const [CanvasPoint(600, 350), CanvasPoint(700, 350)],
           color: 0xff000000,
           width: 8,
           highlight: false,
@@ -230,12 +231,54 @@ void main() {
     await tester.tap(find.byTooltip('Eraser'));
     await tester.pump();
     final canvas = find.byType(InteractiveViewer);
-    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
     await tester.pump();
 
-    expect(note.strokes, isEmpty);
+    expect(note.strokes, hasLength(2));
+    expect(
+      note.strokes.every(
+        (stroke) => stroke.points.every(
+          (point) => (point.x - 650).abs() > 22,
+        ),
+      ),
+      isTrue,
+    );
     expect(note.textBlocks.single, 'Keep this text');
     expect(find.text('Keep this text'), findsOneWidget);
+  });
+
+  testWidgets('text wins over every drawing tool when tapped', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'text-first-note',
+      title: 'Text first',
+      textBlocks: const ['Always editable'],
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(80, 100), CanvasPoint(280, 100)],
+          color: 0xff000000,
+          width: 12,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Eraser'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    await tester.pump();
+
+    expect(note.strokes, hasLength(1));
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
   });
 
   testWidgets('open-source repositories are disclosed in the app',
@@ -388,6 +431,7 @@ void main() {
     final note = Note(
       id: 'ordered-layers',
       title: 'Ordered layers',
+      textBlocks: const ['Sharp text'],
       updated: DateTime.utc(2026, 11, 11),
       strokes: [
         Stroke(
@@ -444,6 +488,17 @@ void main() {
     expect(painter.strokes, [same(note.strokes[0])]);
     expect(find.byType(BackdropFilter), findsNothing);
     expect(find.byType(ImageFiltered), findsNWidgets(8));
+    expect(
+      find.byKey(const ValueKey('blur-sharp-text-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ImageFiltered),
+        matching: find.text('Sharp text'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('normal autosave cycles do not flicker the toolbar status',
@@ -507,7 +562,7 @@ void main() {
     expect(controller.styles.single.bold, isTrue);
   });
 
-  testWidgets('Windows shows a dedicated bottom toolbar in text mode',
+  testWidgets('Windows always keeps an icon toolbar at the bottom',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -518,10 +573,14 @@ void main() {
       ),
     );
 
+    expect(find.byKey(const Key('drawing-toolbar')), findsOneWidget);
+    expect(find.byTooltip('Eraser'), findsWidgets);
+    expect(find.byTooltip('Select'), findsNothing);
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(find.byKey(const Key('drawing-toolbar')), findsNothing);
     expect(find.byTooltip('Add text block'), findsOneWidget);
     expect(find.byTooltip('Lists'), findsOneWidget);
     expect(find.byTooltip('Text colour'), findsOneWidget);
@@ -594,10 +653,12 @@ void main() {
     expect(field.controller!.text, '☐ Milk');
   });
 
-  testWidgets('Windows displays automatic update status and version',
+  testWidgets('update row appears above the toolbar only when needed',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1600, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    UpdateService.availableUpdate.value = null;
+    addTearDown(() => UpdateService.availableUpdate.value = null);
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
@@ -605,10 +666,23 @@ void main() {
       ),
     );
 
-    expect(
-      find.text('Auto updates · v$appVersion', skipOffstage: false),
-      findsOneWidget,
+    expect(find.byKey(const Key('available-update-row')), findsNothing);
+    expect(find.text('Auto updates · v$appVersion'), findsNothing);
+
+    UpdateService.availableUpdate.value = const UpdateInfo(
+      '0.4.12',
+      'https://github.com/hyydra/pennino/releases/download/v0.4.12/Pennino-Windows-Setup.exe',
+      'Pennino-Windows-Setup.exe',
+      '0000000000000000000000000000000000000000000000000000000000000000',
     );
-    expect(find.byTooltip('Check for updates'), findsWidgets);
+    await tester.pump();
+
+    expect(find.byKey(const Key('available-update-row')), findsOneWidget);
+    expect(find.text('Pennino 0.4.12 is available'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Update'), findsOneWidget);
+    expect(
+      tester.getCenter(find.byKey(const Key('available-update-row'))).dy,
+      lessThan(tester.getCenter(find.byKey(const Key('drawing-toolbar'))).dy),
+    );
   });
 }

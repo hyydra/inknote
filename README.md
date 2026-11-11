@@ -20,8 +20,8 @@ Android and Windows are supported release platforms. Linux support is experiment
 Windows may show a SmartScreen warning because the installer is not yet code-signed.
 
 ## Highlights
-- Multiple local notes with typed text, checklists and editable drawing strokes. Drawing tools include pencil, pen, a yellow-default highlighter, a pixel-blur brush that affects earlier content while keeping the paper and later strokes sharp, whole-stroke eraser and undo/redo.
-- A large canvas with direct two-finger pan and zoom, plus stroke selection, movement and deletion at any zoom level. No separate Hand mode is required.
+- Multiple local notes with typed text, checklists and a fixed drawing layer. Drawing tools include pencil, pen, a yellow-default highlighter, a pixel-blur brush that affects earlier drawings while keeping the paper, typed text and later strokes sharp, a segment eraser and undo/redo.
+- A large canvas with direct two-finger pan and zoom. Drawings behave as fixed canvas pixels: they cannot be selected or moved, while the eraser removes only the brushed section. No separate Hand mode is required.
 - Scrolling downward to the bottom appends exactly one continuous page; zooming, horizontal scrolling and upward scrolling never create pages. Dividers and per-page counters continue vertically down the canvas, and the page count is saved with the note.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
@@ -29,11 +29,11 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 - Versioned JSON persistence in the local application documents `Pennino/notes` folder, with automatic migration from the former `notes` folder, atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background local autosave for every editor change with stable toolbar feedback; the UI changes only when saving actually fails.
 - Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds, receive focus immediately when added, and can be moved or resized with persistent handles; inactive borders remain hidden.
-- Fixed, non-scrolling bottom drawing and text toolbars keep every tool on screen. Drawing and text colours use compact dropdown palettes. Text controls include lists, font size, bold and indentation, and character selections retain their own bold, colour and size formatting.
+- Fixed, non-scrolling bottom drawing and text toolbars keep an icon toolbar on screen on Android and Windows. Drawing and text colours use compact dropdown palettes. Text controls include icon-labelled lists, font size, bold and indentation, and character selections retain their own bold, colour and size formatting. Tapping a text block always returns to text mode before a drawing tool can affect it.
 - A graphite, black-leather and champagne-gold interface inspired by late-1990s business organizers, with matching Android and Windows launcher icons.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
-- Automatic update checks run on every application start. When a newer release is available, Windows displays a prompt, downloads `Pennino-Windows-Setup.exe` and launches the installer after the user accepts; the drawing toolbar also shows the current version and offers a manual check. Android downloads the universal APK and opens the system installer.
+- Automatic update checks run on every application start. The update row stays hidden when the app is current and appears directly above the bottom toolbar only when a newer release is available. Windows downloads `Pennino-Windows-Setup.exe` and launches the installer after confirmation; Android downloads the universal APK and opens the system installer.
 
 ## Requirements
 - Flutter stable SDK and Android Studio / Android SDK for Android builds.
@@ -53,7 +53,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.11` builds and publishes three assets:
+Pushing a version tag such as `v0.4.12` builds and publishes two assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.

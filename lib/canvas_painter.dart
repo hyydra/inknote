@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 import 'package:draw_your_image/draw_your_image.dart' as draw_engine;
 import 'package:flutter/material.dart';
 
-import 'canvas_editing.dart';
 import 'note_data.dart';
 
 enum PaperPattern { plain, lined, grid, dots }
@@ -14,8 +13,6 @@ class StrokePainter extends CustomPainter {
   final Stroke? active;
   final Color background;
   final PaperPattern pattern;
-  final Set<int> selectedIndices;
-  final double selectionScale;
   final bool paintBackground;
   final bool paintStrokes;
 
@@ -24,8 +21,6 @@ class StrokePainter extends CustomPainter {
     this.active, {
     this.background = const Color(0xfffffdf7),
     this.pattern = PaperPattern.lined,
-    this.selectedIndices = const {},
-    this.selectionScale = 1,
     this.paintBackground = true,
     this.paintStrokes = true,
   });
@@ -134,26 +129,6 @@ class StrokePainter extends CustomPainter {
         final path = draw_engine.PathBuilderMode.none.converter(engineStroke);
         canvas.drawPath(path, paint);
       }
-    }
-    final selectionBounds = strokeBoundsForSelection(strokes, selectedIndices);
-    if (selectionBounds != null) {
-      final padding = 8 / selectionScale;
-      final selectionPaint = Paint()
-        ..color = const Color(0xff3f51b5)
-        ..strokeWidth = 2 / selectionScale
-        ..style = PaintingStyle.stroke;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTRB(
-            selectionBounds.left - padding,
-            selectionBounds.top - padding,
-            selectionBounds.right + padding,
-            selectionBounds.bottom + padding,
-          ),
-          Radius.circular(6 / selectionScale),
-        ),
-        selectionPaint,
-      );
     }
   }
 
