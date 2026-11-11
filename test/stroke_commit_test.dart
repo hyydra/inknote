@@ -31,5 +31,5 @@ void main() {
     false,
     'missing active stroke makes no note change',
   );
-  print('PASS active stroke can be finalized before lifecycle save');
+  print('PASS active stroke can be finalized before lifecycle suspension');
 }

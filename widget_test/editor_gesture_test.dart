@@ -81,6 +81,130 @@ void main() {
     expect(note.strokes.last.points, hasLength(3));
   });
 
+  testWidgets('nearby samples are skipped and the stroke endpoint is kept',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    final start = origin + const Offset(250, 250);
+    await gesture.down(start);
+    await gesture.moveTo(start + const Offset(0.5, 0));
+    await gesture.moveTo(start + const Offset(1, 0));
+    await gesture.moveTo(start + const Offset(2, 0));
+    await gesture.up();
+    await tester.pump();
+
+    final points = note.strokes.last.points;
+    expect(points, hasLength(2));
+    expect(points.last.x - points.first.x, closeTo(2, 0.01));
+  });
+
+  testWidgets('long active strokes seal rendered chunks without splitting data',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(250, 250));
+    for (var index = 1; index < 128; index++) {
+      await gesture.moveTo(origin + Offset(250 + index * 3, 250));
+    }
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('active-stroke-chunk-0')),
+      findsOneWidget,
+    );
+    await gesture.up();
+    await tester.pump();
+    expect(note.strokes, hasLength(2));
+    expect(note.strokes.last.points, hasLength(128));
+  });
+
+  testWidgets('Android text and eraser tools use purpose-drawn icons',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 740));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('drawing-tool-icon-text')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('drawing-tool-icon-eraser')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('normal strokes are batched around blur layers', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke()
+      ..strokes = [
+        noteWithStroke().strokes.single,
+        Stroke(
+          points: const [CanvasPoint(100, 110), CanvasPoint(200, 110)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+        Stroke(
+          points: const [CanvasPoint(100, 120), CanvasPoint(200, 120)],
+          color: 0xff000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        Stroke(
+          points: const [CanvasPoint(100, 140), CanvasPoint(200, 140)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+        Stroke(
+          points: const [CanvasPoint(100, 150), CanvasPoint(200, 150)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('stroke-layer-run-0-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('blur-layer-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('stroke-layer-run-3-5')), findsOneWidget);
+  });
+
   testWidgets('the highlighter starts in yellow', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -335,7 +459,7 @@ void main() {
     await tester.tap(find.text('Open-source software'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('github.com/chooyan-eng/draw_your_image'),
+    expect(find.textContaining('file_selector, path_provider and uuid'),
         findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Licences'), findsOneWidget);
   });
@@ -507,17 +631,21 @@ void main() {
         stack.children.indexWhere((child) => child.key == key);
 
     expect(
-        layerIndex(const ValueKey('stroke-layer-0')), greaterThanOrEqualTo(0));
+      layerIndex(const ValueKey('stroke-layer-run-0-1')),
+      greaterThanOrEqualTo(0),
+    );
     expect(layerIndex(const ValueKey('blur-layer-1')), greaterThanOrEqualTo(0));
     expect(
-        layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
-    expect(
-      layerIndex(const ValueKey('blur-layer-1')),
-      greaterThan(layerIndex(const ValueKey('stroke-layer-0'))),
+      layerIndex(const ValueKey('stroke-layer-run-2-3')),
+      greaterThanOrEqualTo(0),
     );
     expect(
       layerIndex(const ValueKey('blur-layer-1')),
-      lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
+      greaterThan(layerIndex(const ValueKey('stroke-layer-run-0-1'))),
+    );
+    expect(
+      layerIndex(const ValueKey('blur-layer-1')),
+      lessThan(layerIndex(const ValueKey('stroke-layer-run-2-3'))),
     );
     final blurredContent = tester.widget<CustomPaint>(
       find.byKey(const ValueKey('blur-strokes-1-7')),
@@ -539,7 +667,7 @@ void main() {
     );
   });
 
-  testWidgets('normal autosave cycles do not flicker the toolbar status',
+  testWidgets('drawing changes wait for the manual save button',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -556,14 +684,13 @@ void main() {
       ),
     );
 
-    expect(find.text('Autosave on'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
     await tester.dragFrom(const Offset(300, 300), const Offset(80, 40));
     await tester.pump();
-    expect(find.text('Autosave on'), findsOneWidget);
-    expect(find.text('Unsaved'), findsNothing);
-    expect(find.text('Saving…'), findsNothing);
+    expect(find.byIcon(Icons.save), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Autosave on'), findsOneWidget);
+    expect(find.byIcon(Icons.save), findsOneWidget);
+    expect(find.text('Autosave on'), findsNothing);
   });
 
   testWidgets('bold applies to selected text instead of the whole block',
@@ -643,10 +770,11 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke()..textBlocks.add('Typed note');
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.android),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: note),
       ),
     );
 
@@ -659,6 +787,15 @@ void main() {
       tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
       greaterThan(700),
     );
+    await tester.tap(find.byTooltip('Font size'));
+    await tester.pumpAndSettle();
+    final fontSizeMarks = find.byWidgetPredicate((widget) {
+      if (widget is! CustomPaint) return false;
+      final key = widget.key;
+      return key is ValueKey<String> &&
+          key.value.startsWith('font-size-mark-tt-');
+    });
+    expect(fontSizeMarks, findsNWidgets(6));
   });
 
   testWidgets('inline checklist marks toggle when tapped', (tester) async {

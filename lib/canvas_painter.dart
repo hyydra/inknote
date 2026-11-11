@@ -1,20 +1,28 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:draw_your_image/draw_your_image.dart' as draw_engine;
 import 'package:flutter/material.dart';
 
 import 'note_data.dart';
 
 enum PaperPattern { plain, lined, grid, dots }
 
+class _StrokePathCache {
+  final Path path = Path();
+  int pointCount = 0;
+}
+
 class StrokePainter extends CustomPainter {
+  static final Expando<_StrokePathCache> _strokePaths =
+      Expando<_StrokePathCache>('stroke paths');
+
   final List<Stroke> strokes;
   final Stroke? active;
   final Color background;
   final PaperPattern pattern;
   final bool paintBackground;
   final bool paintStrokes;
+  final bool paintSinglePoint;
 
   StrokePainter(
     this.strokes,
@@ -23,29 +31,12 @@ class StrokePainter extends CustomPainter {
     this.pattern = PaperPattern.lined,
     this.paintBackground = true,
     this.paintStrokes = true,
+    this.paintSinglePoint = true,
     super.repaint,
   });
 
-  draw_engine.Stroke _engineStroke(Stroke stroke) => draw_engine.Stroke(
-        deviceKind: ui.PointerDeviceKind.stylus,
-        points: stroke.points
-            .map(
-              (point) => draw_engine.StrokePoint(
-                position: Offset(point.x, point.y),
-                pressure: point.pressure,
-                pressureMin: point.pressureMin,
-                pressureMax: point.pressureMax,
-                tilt: point.tilt,
-                orientation: point.orientation,
-              ),
-            )
-            .toList(),
-        color: Color(stroke.color),
-        width: stroke.width,
-      );
-
   double _pressureWidth(
-    draw_engine.StrokePoint point,
+    CanvasPoint point,
     double baseWidth,
   ) {
     final pressureFactor = 0.25 + point.normalizedPressure * 0.75;
@@ -55,7 +46,7 @@ class StrokePainter extends CustomPainter {
 
   void _paintStroke(Canvas canvas, Stroke stroke) {
     if (stroke.points.isEmpty || stroke.blur) return;
-    final engineStroke = _engineStroke(stroke);
+    if (stroke.points.length == 1 && !paintSinglePoint) return;
     final paint = Paint()
       ..color = Color(stroke.color)
           .withValues(alpha: stroke.highlight ? 0.32 : stroke.opacity)
@@ -64,31 +55,48 @@ class StrokePainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
     if (stroke.pressureSensitive) {
-      _paintPressureStroke(canvas, engineStroke, paint);
+      _paintPressureStroke(canvas, stroke, paint);
       return;
     }
-    if (engineStroke.points.length == 1) {
+    if (stroke.points.length == 1) {
       canvas.drawPoints(
         ui.PointMode.points,
-        [engineStroke.points.first.position],
+        [Offset(stroke.points.single.x, stroke.points.single.y)],
         paint,
       );
       return;
     }
-    final path = draw_engine.PathBuilderMode.none.converter(engineStroke);
-    canvas.drawPath(path, paint);
+    canvas.drawPath(_pathFor(stroke), paint);
+  }
+
+  Path _pathFor(Stroke stroke) {
+    final points = stroke.points;
+    final cache = _strokePaths[stroke] ??= _StrokePathCache();
+    if (cache.pointCount > points.length) {
+      cache.path.reset();
+      cache.pointCount = 0;
+    }
+    if (cache.pointCount == 0 && points.isNotEmpty) {
+      cache.path.moveTo(points.first.x, points.first.y);
+      cache.pointCount = 1;
+    }
+    for (var index = cache.pointCount; index < points.length; index++) {
+      cache.path.lineTo(points[index].x, points[index].y);
+    }
+    cache.pointCount = points.length;
+    return cache.path;
   }
 
   void _paintPressureStroke(
     Canvas canvas,
-    draw_engine.Stroke stroke,
+    Stroke stroke,
     Paint paint,
   ) {
     if (stroke.points.length == 1) {
       paint.strokeWidth = _pressureWidth(stroke.points.single, stroke.width);
       canvas.drawPoints(
         ui.PointMode.points,
-        [stroke.points.single.position],
+        [Offset(stroke.points.single.x, stroke.points.single.y)],
         paint,
       );
       return;
@@ -99,7 +107,7 @@ class StrokePainter extends CustomPainter {
       paint.strokeWidth = (_pressureWidth(from, stroke.width) +
               _pressureWidth(to, stroke.width)) /
           2;
-      canvas.drawLine(from.position, to.position, paint);
+      canvas.drawLine(Offset(from.x, from.y), Offset(to.x, to.y), paint);
     }
   }
 
@@ -145,6 +153,7 @@ class StrokePainter extends CustomPainter {
         pattern != old.pattern ||
         paintBackground != old.paintBackground ||
         paintStrokes != old.paintStrokes ||
+        paintSinglePoint != old.paintSinglePoint ||
         !identical(active, old.active) ||
         strokes.length != old.strokes.length) {
       return true;

@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-import 'autosave_controller.dart';
 import 'app_version.dart';
 import 'canvas_editing.dart';
 import 'canvas_painter.dart';
@@ -207,6 +206,176 @@ enum DrawTool {
   blur,
 }
 
+class _DrawingToolIcon extends StatelessWidget {
+  final DrawTool tool;
+  final double size;
+
+  const _DrawingToolIcon(this.tool, {this.size = 24});
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
+    if (tool == DrawTool.text) {
+      return CustomPaint(
+        key: const ValueKey('drawing-tool-icon-text'),
+        size: Size.square(size),
+        painter: _TextToolIconPainter(color),
+      );
+    }
+    if (tool == DrawTool.eraser) {
+      return CustomPaint(
+        key: const ValueKey('drawing-tool-icon-eraser'),
+        size: Size.square(size),
+        painter: _EraserToolIconPainter(color),
+      );
+    }
+    return Icon(_toolIconData(tool), size: size);
+  }
+
+  IconData _toolIconData(DrawTool tool) => switch (tool) {
+        DrawTool.hand => Icons.pan_tool_outlined,
+        DrawTool.text => Icons.title,
+        DrawTool.pencil => Icons.create_outlined,
+        DrawTool.pen => Icons.edit,
+        DrawTool.highlighter => Icons.border_color,
+        DrawTool.eraser => Icons.backspace_outlined,
+        DrawTool.blur => Icons.blur_on,
+      };
+}
+
+class _TextToolIconPainter extends CustomPainter {
+  final Color color;
+
+  const _TextToolIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = size.shortestSide * 0.11
+      ..strokeCap = StrokeCap.square;
+    canvas.drawLine(
+      Offset(size.width * 0.2, size.height * 0.26),
+      Offset(size.width * 0.8, size.height * 0.26),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.26),
+      Offset(size.width * 0.5, size.height * 0.78),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TextToolIconPainter oldDelegate) =>
+      color != oldDelegate.color;
+}
+
+class _FontSizeMarkIcon extends StatelessWidget {
+  const _FontSizeMarkIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
+    return CustomPaint(
+      key: key,
+      size: const Size.square(24),
+      painter: _FontSizeMarkIconPainter(color),
+    );
+  }
+}
+
+class _FontSizeMarkIconPainter extends CustomPainter {
+  final Color color;
+
+  const _FontSizeMarkIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = size.shortestSide * 0.1
+      ..strokeCap = StrokeCap.square;
+    canvas.drawLine(
+      Offset(size.width * 0.05, size.height * 0.25),
+      Offset(size.width * 0.45, size.height * 0.25),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.25, size.height * 0.25),
+      Offset(size.width * 0.25, size.height * 0.78),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.68, size.height * 0.36),
+      Offset(size.width * 0.68, size.height * 0.78),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.54, size.height * 0.50),
+      Offset(size.width * 0.85, size.height * 0.50),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _FontSizeMarkIconPainter oldDelegate) =>
+      color != oldDelegate.color;
+}
+
+class _EraserToolIconPainter extends CustomPainter {
+  final Color color;
+
+  const _EraserToolIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final body = Path()
+      ..moveTo(size.width * 0.18, size.height * 0.62)
+      ..lineTo(size.width * 0.59, size.height * 0.21)
+      ..quadraticBezierTo(
+        size.width * 0.64,
+        size.height * 0.16,
+        size.width * 0.69,
+        size.height * 0.21,
+      )
+      ..lineTo(size.width * 0.84, size.height * 0.36)
+      ..quadraticBezierTo(
+        size.width * 0.89,
+        size.height * 0.41,
+        size.width * 0.84,
+        size.height * 0.46,
+      )
+      ..lineTo(size.width * 0.48, size.height * 0.82)
+      ..lineTo(size.width * 0.37, size.height * 0.82)
+      ..close();
+    canvas.drawPath(
+      body,
+      Paint()
+        ..color = color.withValues(alpha: 0.18)
+        ..style = PaintingStyle.fill,
+    );
+    final outline = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.shortestSide * 0.09
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(body, outline);
+    canvas.drawLine(
+      Offset(size.width * 0.40, size.height * 0.40),
+      Offset(size.width * 0.64, size.height * 0.64),
+      outline,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _EraserToolIconPainter oldDelegate) =>
+      color != oldDelegate.color;
+}
+
 class EditorPage extends StatefulWidget {
   final Note note;
   final bool launcherMode;
@@ -228,16 +397,22 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   Color highlighterColor = Colors.yellow;
   double width = 3;
   Stroke? active;
+  Stroke? activePreview;
+  final List<Stroke> activeStrokeChunks = [];
   bool showText = true;
   bool showTasks = false;
   bool applyingExternalChange = false;
+  bool hasUnsavedChanges = false;
+  bool isSaving = false;
   bool saveFailed = false;
+  int _editRevision = 0;
+  Future<void>? _saveOperation;
   bool gestureHistoryRecorded = false;
   final Map<int, Offset> canvasPointerPositions = {};
   int? drawingPointer;
+  Offset? lastSampleViewportPosition;
   double canvasViewportHeight = 0;
   double canvasPageHeight = 1200;
-  late final AutosaveController autosave;
   late final CanvasEditorController canvasEditor;
   final store = NoteStore(directoryProvider: noteDirectory);
   late final DriveSyncService syncService;
@@ -268,22 +443,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         if (mounted) setState(() {});
       },
     );
-    autosave = AutosaveController(
-      onSave: _persist,
-      onStatusChanged: (status) {
-        final failed = status == SaveStatus.failed;
-        if (mounted && failed != saveFailed) {
-          setState(() => saveFailed = failed);
-        }
-      },
-    );
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
     taskController = TextEditingController();
-    textBlockController.replace(
-      widget.note.textBlocks,
-      formats: widget.note.textBlockFormats,
-    );
+    applyingExternalChange = true;
+    try {
+      textBlockController.replace(
+        widget.note.textBlocks,
+        formats: widget.note.textBlockFormats,
+      );
+    } finally {
+      applyingExternalChange = false;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncCurrentInBackground();
     });
@@ -293,7 +464,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     driveSyncDebouncer.dispose();
-    autosave.dispose();
     titleController.dispose();
     textBlockController.dispose();
     taskController.dispose();
@@ -309,14 +479,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         state == AppLifecycleState.detached) {
       _finalizeActiveStroke();
       gestureHistoryRecorded = false;
-      unawaited(
-        autosave.saveNow().whenComplete(driveSyncDebouncer.flush),
-      );
     }
   }
 
   void _markChanged() {
-    if (!applyingExternalChange) autosave.markChanged();
+    if (applyingExternalChange) return;
+    _editRevision++;
+    if (hasUnsavedChanges) return;
+    setState(() => hasUnsavedChanges = true);
   }
 
   void addTextBlock() {
@@ -585,6 +755,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       erase(viewportPoint);
       return;
     }
+    lastSampleViewportPosition = viewportPoint;
     final scenePoint = _scenePoint(event);
     canvasEditor.recordHistory();
     gestureHistoryRecorded = true;
@@ -604,6 +775,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         opacity: tool == DrawTool.pencil ? 0.58 : 1,
         pressureSensitive: tool == DrawTool.pen || tool == DrawTool.pencil,
       );
+      activePreview = active!.blur ? null : _strokePreview(active!, scenePoint);
+      activeStrokeChunks.clear();
     });
   }
 
@@ -649,12 +822,54 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     if (active == null) return;
-    final scenePoint = _scenePoint(event);
-    active!.points.add(scenePoint);
+    _appendStrokePoint(event);
+  }
+
+  void _appendStrokePoint(PointerEvent event, {bool force = false}) {
+    final stroke = active;
+    if (stroke == null) return;
+    final point = _scenePoint(event);
+    final previous = stroke.points.last;
+    final previousViewport = lastSampleViewportPosition;
+    final movedEnough = previousViewport == null ||
+        (event.localPosition - previousViewport).distanceSquared >= 4;
+    final pressureChanged =
+        (point.normalizedPressure - previous.normalizedPressure).abs() >= 0.04;
+    final tiltChanged = (point.tilt - previous.tilt).abs() >= 0.05;
+    if (!force && !movedEnough && !pressureChanged && !tiltChanged) return;
+    if ((point.x - previous.x).abs() < 0.0001 &&
+        (point.y - previous.y).abs() < 0.0001 &&
+        !pressureChanged &&
+        !tiltChanged) {
+      return;
+    }
+    stroke.points.add(point);
+    final preview = activePreview;
+    if (!stroke.blur && preview != null) {
+      preview.points.add(point);
+      if (preview.points.length >= 128) {
+        setState(() {
+          activeStrokeChunks.add(preview);
+          activePreview = _strokePreview(stroke, point);
+        });
+      }
+    }
+    lastSampleViewportPosition = event.localPosition;
     canvasRepaint.value++;
   }
 
-  void end() {
+  Stroke _strokePreview(Stroke source, CanvasPoint firstPoint) => Stroke(
+        points: [firstPoint],
+        color: source.color,
+        width: source.width,
+        highlight: source.highlight,
+        blur: source.blur,
+        opacity: source.opacity,
+        pressureSensitive: source.pressureSensitive,
+      );
+
+  void end(PointerEvent event) {
+    _appendStrokePoint(event, force: true);
     _finalizeActiveStroke();
   }
 
@@ -673,7 +888,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (active != null) {
       setState(() {
         active = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
         gestureHistoryRecorded = false;
+        lastSampleViewportPosition = null;
       });
     }
   }
@@ -723,7 +941,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _canvasPointerEnd(PointerEvent event) {
     if (drawingPointer == event.pointer && canvasPointerPositions.length == 1) {
-      end();
+      end(event);
     }
     canvasPointerPositions.remove(event.pointer);
     if (canvasPointerPositions.isEmpty) drawingPointer = null;
@@ -756,29 +974,33 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void _finalizeActiveStroke() {
-    if (!commitActiveStroke(widget.note.strokes, active)) return;
+    if (!commitActiveStroke(widget.note.strokes, active)) {
+      lastSampleViewportPosition = null;
+      return;
+    }
     setState(() {
       active = null;
+      activePreview = null;
+      activeStrokeChunks.clear();
       gestureHistoryRecorded = false;
+      lastSampleViewportPosition = null;
     });
     _markChanged();
   }
 
   void erase(Offset viewportPoint) {
-    final index = canvasEditor.hitTest(
+    final result = eraseStrokesAtViewport(
+      widget.note.strokes,
       CanvasPoint(viewportPoint.dx, viewportPoint.dy),
       canvasTransform,
-      screenTolerance: 18,
+      screenRadius: 18,
     );
-    if (index == null) return;
+    if (!result.$2) return;
     if (!gestureHistoryRecorded) {
       canvasEditor.recordHistory();
       gestureHistoryRecorded = true;
     }
-    setState(() => canvasEditor.eraseAt(
-          CanvasPoint(viewportPoint.dx, viewportPoint.dy),
-          canvasTransform,
-        ));
+    setState(() => widget.note.strokes = result.$1);
     _markChanged();
   }
 
@@ -817,7 +1039,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     syncService.syncInBackground(
       currentNoteId: widget.note.id,
       onResult: (result) {
-        if (!mounted || autosave.status != SaveStatus.saved) return;
+        if (!mounted || hasUnsavedChanges || isSaving) return;
         final syncedCurrent = result.currentNote;
         if (syncedCurrent != null &&
             syncedCurrent.updated.isAfter(widget.note.updated)) {
@@ -827,20 +1049,118 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> save({bool showMessage = true}) async {
-    await autosave.saveNow();
-    if (!showMessage || !mounted) return;
-    final message = autosave.status == SaveStatus.failed
-        ? 'Could not save this note. Your edits are still open.'
-        : 'Saved on this device';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  Future<void> save({bool showMessage = true}) {
+    final activeSave = _saveOperation;
+    if (activeSave != null) return activeSave;
+    final operation = _performSave(showMessage: showMessage);
+    _saveOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_saveOperation, operation)) _saveOperation = null;
+    });
   }
 
-  String get saveLabel => saveFailed ? 'Save failed' : 'Autosave on';
+  Future<void> _performSave({required bool showMessage}) async {
+    _finalizeActiveStroke();
+    final savingRevision = _editRevision;
+    setState(() {
+      isSaving = true;
+      saveFailed = false;
+    });
+    try {
+      await _persist();
+      if (!mounted) return;
+      final hasNewerChanges = _editRevision != savingRevision;
+      setState(() {
+        isSaving = false;
+        saveFailed = false;
+        hasUnsavedChanges = hasNewerChanges;
+      });
+      if (showMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              hasNewerChanges
+                  ? 'Saved. Newer edits still need saving.'
+                  : 'Saved on this device',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        isSaving = false;
+        saveFailed = true;
+        hasUnsavedChanges = true;
+      });
+      if (showMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Save failed: $error')),
+        );
+      }
+    }
+  }
 
-  IconData get saveIcon =>
-      saveFailed ? Icons.error_outline : Icons.check_circle_outline;
+  Future<bool> _confirmSaveBeforeLeaving() async {
+    _finalizeActiveStroke();
+    if (!hasUnsavedChanges) return true;
+    if (isSaving) {
+      await save(showMessage: false);
+      if (!mounted) return false;
+      if (saveFailed || hasUnsavedChanges) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('The note is still unsaved. Try saving again.'),
+          ),
+        );
+        return false;
+      }
+      return true;
+    }
+    final saveBeforeLeaving = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: const Text('Save this note before leaving?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Stay'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save and leave'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || saveBeforeLeaving != true) return false;
+    await save(showMessage: false);
+    if (saveFailed || hasUnsavedChanges) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The note is still unsaved. Try saving again.'),
+        ),
+      );
+      return false;
+    }
+    return true;
+  }
+
+  String get saveLabel => isSaving
+      ? 'Saving'
+      : saveFailed
+          ? 'Retry save'
+          : 'Save';
+
+  IconData get saveIcon => isSaving
+      ? Icons.hourglass_top
+      : saveFailed
+          ? Icons.error_outline
+          : hasUnsavedChanges
+              ? Icons.save
+              : Icons.save_outlined;
 
   Future<Uint8List> renderPreview() async {
     final recorder = ui.PictureRecorder();
@@ -868,7 +1188,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Future<void> pinWidget() async {
     await save(showMessage: false);
-    if (autosave.status == SaveStatus.failed) {
+    if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1040,6 +1360,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         widget.note.backgroundColor = syncedCurrent.backgroundColor;
         widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
         widget.note.pageCount = syncedCurrent.pageCount;
+        hasUnsavedChanges = false;
+        saveFailed = false;
         gestureHistoryRecorded = false;
         canvasEditor.clearHistory();
         titleController.text = syncedCurrent.title;
@@ -1065,7 +1387,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     await save(showMessage: false);
-    if (autosave.status == SaveStatus.failed) {
+    if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1129,12 +1451,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _drawingToolbar() {
     final tools = [
-      (DrawTool.text, Icons.text_fields, 'Text'),
-      (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-      (DrawTool.pen, Icons.edit, 'Pen'),
-      (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
-      (DrawTool.eraser, Icons.backspace_outlined, 'Eraser'),
-      (DrawTool.blur, Icons.blur_on, 'Blur'),
+      (DrawTool.text, 'Text'),
+      (DrawTool.pencil, 'Pencil'),
+      (DrawTool.pen, 'Pen'),
+      (DrawTool.highlighter, 'Highlighter'),
+      (DrawTool.eraser, 'Eraser'),
+      (DrawTool.blur, 'Blur'),
     ];
     return SizedBox(
       key: Key(
@@ -1150,14 +1472,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             for (final entry in tools)
               Expanded(
                 child: IconButton(
-                  tooltip: entry.$3,
+                  tooltip: entry.$2,
                   style: IconButton.styleFrom(
                     backgroundColor: tool == entry.$1
                         ? Theme.of(context).colorScheme.primaryContainer
                         : null,
                   ),
                   onPressed: () => _selectTool(entry.$1),
-                  icon: Icon(entry.$2),
+                  icon: _DrawingToolIcon(entry.$1),
                 ),
               ),
             Expanded(
@@ -1257,7 +1579,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   PopupMenuItem(
                     value: size,
                     child: Row(children: [
-                      const Icon(Icons.format_size),
+                      _FontSizeMarkIcon(
+                        key: ValueKey('font-size-mark-tt-${size.round()}'),
+                      ),
                       const SizedBox(width: 12),
                       Text('${size.round()} pt'),
                     ]),
@@ -1672,6 +1996,60 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
+  List<Widget> _strokeLayers() {
+    final layers = <Widget>[];
+    final priorStrokes = <Stroke>[];
+    var normalStrokes = <Stroke>[];
+    var normalStart = 0;
+    for (var index = 0; index < widget.note.strokes.length; index++) {
+      final stroke = widget.note.strokes[index];
+      if (!stroke.blur) {
+        if (normalStrokes.isEmpty) normalStart = index;
+        normalStrokes.add(stroke);
+        priorStrokes.add(stroke);
+        continue;
+      }
+      if (normalStrokes.isNotEmpty) {
+        layers.add(_normalStrokeLayer(normalStrokes, normalStart, index));
+        normalStrokes = <Stroke>[];
+      }
+      layers.add(
+        _blurStrokeLayer(
+          stroke,
+          priorStrokes: List<Stroke>.of(priorStrokes),
+          layerIndex: index,
+          key: ValueKey('blur-layer-$index'),
+        ),
+      );
+    }
+    if (normalStrokes.isNotEmpty) {
+      layers.add(
+        _normalStrokeLayer(
+          normalStrokes,
+          normalStart,
+          widget.note.strokes.length,
+        ),
+      );
+    }
+    return layers;
+  }
+
+  Widget _normalStrokeLayer(List<Stroke> strokes, int start, int end) =>
+      Positioned.fill(
+        key: ValueKey('stroke-layer-run-$start-$end'),
+        child: IgnorePointer(
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: StrokePainter(
+                strokes,
+                null,
+                paintBackground: false,
+              ),
+            ),
+          ),
+        ),
+      );
+
   Future<void> _showOpenSourceNotice() async {
     await showDialog<void>(
       context: context,
@@ -1680,8 +2058,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         content: const SingleChildScrollView(
           child: SelectableText(
             'Pennino uses Flutter and these direct open-source packages:\n\n'
-            'draw_your_image\n'
-            'github.com/chooyan-eng/draw_your_image\n\n'
             'file_selector, path_provider and uuid\n\n'
             'Repository links and licences are also listed in the README.',
           ),
@@ -1712,16 +2088,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
           if (didPop) return;
-          await save(showMessage: false);
-          if (!context.mounted) return;
-          if (autosave.status == SaveStatus.failed) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('The note is still unsaved. Try saving again.'),
-              ),
-            );
-            return;
-          }
+          if (!await _confirmSaveBeforeLeaving() || !context.mounted) return;
           if (widget.launcherMode) {
             await SystemNavigator.pop();
           } else {
@@ -1734,19 +2101,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ? IconButton(
                     tooltip: 'All notes',
                     onPressed: () async {
-                      await save(showMessage: false);
-                      if (autosave.status == SaveStatus.failed) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'The note is still unsaved. Try saving again.',
-                              ),
-                            ),
-                          );
-                        }
-                        return;
-                      }
+                      if (!await _confirmSaveBeforeLeaving()) return;
                       if (context.mounted)
                         await Navigator.push(
                           context,
@@ -1790,14 +2145,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               ),
               if (MediaQuery.sizeOf(context).width >= 700)
                 TextButton.icon(
-                  onPressed: save,
+                  onPressed: isSaving ? null : save,
                   icon: Icon(saveIcon, size: 19),
                   label: Text(saveLabel),
                 )
               else
                 IconButton(
-                  tooltip: saveLabel,
-                  onPressed: save,
+                  tooltip: saveFailed
+                      ? 'Save failed; retry'
+                      : hasUnsavedChanges
+                          ? 'Save unsaved note'
+                          : 'Save note',
+                  onPressed: isSaving ? null : save,
                   icon: Icon(saveIcon),
                 ),
               PopupMenuButton<String>(
@@ -1834,7 +2193,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   PopupMenuItem(
                     value: 'text',
                     child: ListTile(
-                      leading: const Icon(Icons.text_fields),
+                      leading: const _DrawingToolIcon(DrawTool.text),
                       title: Text(
                           showText ? 'Hide typed text' : 'Show typed text'),
                     ),
@@ -1907,22 +2266,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     children: [
                       for (final entry in [
-                        (DrawTool.text, Icons.text_fields, 'Text'),
-                        (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-                        (DrawTool.pen, Icons.edit, 'Pen'),
-                        (
-                          DrawTool.highlighter,
-                          Icons.border_color,
-                          'Highlighter'
-                        ),
-                        (DrawTool.eraser, Icons.backspace_outlined, 'Eraser'),
-                        (DrawTool.blur, Icons.blur_on, 'Blur'),
+                        (DrawTool.text, 'Text'),
+                        (DrawTool.pencil, 'Pencil'),
+                        (DrawTool.pen, 'Pen'),
+                        (DrawTool.highlighter, 'Highlighter'),
+                        (DrawTool.eraser, 'Eraser'),
+                        (DrawTool.blur, 'Blur'),
                       ])
                         Padding(
                           padding: const EdgeInsets.all(4),
                           child: ChoiceChip(
-                            label: Text(entry.$3),
-                            avatar: Icon(entry.$2, size: 18),
+                            label: Text(entry.$2),
+                            avatar: _DrawingToolIcon(entry.$1, size: 18),
                             selected: tool == entry.$1,
                             onSelected: (_) => _selectTool(entry.$1),
                           ),
@@ -2070,32 +2425,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                       index < textControllers.length;
                                       index++)
                                     _canvasTextBlock(index),
-                                for (var index = 0;
-                                    index < widget.note.strokes.length;
-                                    index++)
-                                  if (widget.note.strokes[index].blur)
-                                    _blurStrokeLayer(
-                                      widget.note.strokes[index],
-                                      priorStrokes: widget.note.strokes
-                                          .take(index)
-                                          .where((stroke) => !stroke.blur)
-                                          .toList(),
-                                      layerIndex: index,
-                                      key: ValueKey('blur-layer-$index'),
-                                    )
-                                  else
-                                    Positioned.fill(
-                                      key: ValueKey('stroke-layer-$index'),
-                                      child: IgnorePointer(
-                                        child: CustomPaint(
-                                          painter: StrokePainter(
-                                            [widget.note.strokes[index]],
-                                            null,
-                                            paintBackground: false,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                ..._strokeLayers(),
                                 if (active != null && active!.blur)
                                   _blurStrokeLayer(
                                     active!,
@@ -2105,16 +2435,35 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     layerIndex: widget.note.strokes.length,
                                     key: const Key('active-blur-layer'),
                                   ),
-                                if (active != null && !active!.blur)
+                                for (var index = 0;
+                                    index < activeStrokeChunks.length;
+                                    index++)
+                                  Positioned.fill(
+                                    key: ValueKey('active-stroke-chunk-$index'),
+                                    child: IgnorePointer(
+                                      child: RepaintBoundary(
+                                        child: CustomPaint(
+                                          painter: StrokePainter(
+                                            [activeStrokeChunks[index]],
+                                            null,
+                                            paintBackground: false,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (activePreview != null)
                                   Positioned.fill(
                                     key: const Key('active-stroke-layer'),
                                     child: IgnorePointer(
                                       child: RepaintBoundary(
                                         child: CustomPaint(
                                           painter: StrokePainter(
-                                            [active!],
+                                            [activePreview!],
                                             null,
                                             paintBackground: false,
+                                            paintSinglePoint:
+                                                activeStrokeChunks.isEmpty,
                                             repaint: canvasRepaint,
                                           ),
                                         ),

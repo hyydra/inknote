@@ -17,6 +17,12 @@ class CanvasPoint {
     this.orientation = 0,
   });
 
+  double get normalizedPressure {
+    final range = pressureMax - pressureMin;
+    if (range < 0.0001) return 0.5;
+    return ((pressure - pressureMin) / range).clamp(0.0, 1.0).toDouble();
+  }
+
   factory CanvasPoint.fromJson(Map<String, dynamic> value) => CanvasPoint(
         (value['x'] as num).toDouble(),
         (value['y'] as num).toDouble(),
