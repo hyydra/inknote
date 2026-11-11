@@ -1446,6 +1446,37 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _canvasTextBlockPreview(int index) {
+    final format = textFormats[index];
+    final baseStyle = TextStyle(
+      color: Color(format.color),
+      fontSize: format.fontSize,
+      fontWeight: format.bold ? FontWeight.bold : FontWeight.normal,
+    );
+    return Positioned(
+      left: format.x,
+      top: format.y,
+      width: format.width,
+      height: format.height,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 32, 8, 8),
+        child: ClipRect(
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: RichText(
+              text: textControllers[index].buildTextSpan(
+                context: context,
+                style: baseStyle,
+                withComposing: false,
+              ),
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _canvasTextBlockControls(int index) {
     final format = textFormats[index];
     final selected = activeTextIndex == index && textFocusNodes[index].hasFocus;
@@ -1604,32 +1635,65 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _blurStrokeLayer(Stroke stroke, {Key? key}) {
     const passes = <(double, double, double)>[
-      (1.25, 3, 0.18),
-      (1.05, 6, 0.28),
-      (0.85, 9, 0.42),
-      (0.65, 12, 0.70),
+      (2.20, 2.5, 0.06),
+      (1.85, 4, 0.09),
+      (1.55, 6, 0.13),
+      (1.30, 8, 0.19),
+      (1.08, 10, 0.27),
+      (0.88, 12, 0.38),
+      (0.70, 14, 0.54),
+      (0.52, 16, 1.00),
     ];
+    final paperPattern = PaperPattern.values.firstWhere(
+      (item) => item.name == widget.note.backgroundPattern,
+      orElse: () => PaperPattern.lined,
+    );
     return Positioned.fill(
       key: key,
       child: IgnorePointer(
         child: Stack(
           fit: StackFit.expand,
           children: [
-            for (final pass in passes)
+            for (var index = 0; index < passes.length; index++)
               Opacity(
-                opacity: pass.$3,
+                opacity: passes[index].$3,
                 child: ClipPath(
                   clipBehavior: Clip.antiAlias,
                   clipper: BlurStrokeClipper(
                     stroke,
-                    widthScale: pass.$1,
+                    widthScale: passes[index].$1,
                   ),
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(
-                      sigmaX: pass.$2,
-                      sigmaY: pass.$2,
-                    ),
-                    child: const ColoredBox(color: Color(0x01ffffff)),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CustomPaint(
+                        key: ValueKey('blur-paper-$index'),
+                        painter: StrokePainter(
+                          const [],
+                          null,
+                          background: Color(widget.note.backgroundColor),
+                          pattern: paperPattern,
+                          paintStrokes: false,
+                        ),
+                      ),
+                      ImageFiltered(
+                        key: ValueKey('blur-content-$index'),
+                        imageFilter: ui.ImageFilter.blur(
+                          sigmaX: passes[index].$2,
+                          sigmaY: passes[index].$2,
+                        ),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (showText)
+                              for (var textIndex = 0;
+                                  textIndex < textControllers.length;
+                                  textIndex++)
+                                _canvasTextBlockPreview(textIndex),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2058,8 +2122,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     _blurStrokeLayer(
                                       widget.note.strokes[index],
                                       key: ValueKey('blur-layer-$index'),
-                                    )
-                                  else
+                                    ),
+                                if (active != null && active!.blur)
+                                  _blurStrokeLayer(
+                                    active!,
+                                    key: const Key('active-blur-layer'),
+                                  ),
+                                for (var index = 0;
+                                    index < widget.note.strokes.length;
+                                    index++)
+                                  if (!widget.note.strokes[index].blur)
                                     Positioned.fill(
                                       key: ValueKey('stroke-layer-$index'),
                                       child: IgnorePointer(
@@ -2072,12 +2144,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     ),
-                                if (active != null && active!.blur)
-                                  _blurStrokeLayer(
-                                    active!,
-                                    key: const Key('active-blur-layer'),
-                                  )
-                                else if (active != null)
+                                if (active != null && !active!.blur)
                                   Positioned.fill(
                                     key: const Key('active-stroke-layer'),
                                     child: IgnorePointer(

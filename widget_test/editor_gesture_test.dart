@@ -81,7 +81,8 @@ void main() {
 
     expect(note.strokes.last.blur, isTrue);
     expect(note.strokes.last.width, 44);
-    expect(find.byType(BackdropFilter), findsWidgets);
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsWidgets);
   });
 
   testWidgets('the editor fits a narrow Android phone viewport',
@@ -352,8 +353,7 @@ void main() {
     );
   });
 
-  testWidgets('later drawing layers stay above earlier blur layers',
-      (tester) async {
+  testWidgets('every drawing layer stays above blur layers', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = Note(
@@ -401,14 +401,15 @@ void main() {
     expect(
         layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
     expect(
-      layerIndex(const ValueKey('stroke-layer-0')),
-      lessThan(layerIndex(const ValueKey('blur-layer-1'))),
+      layerIndex(const ValueKey('blur-layer-1')),
+      lessThan(layerIndex(const ValueKey('stroke-layer-0'))),
     );
     expect(
       layerIndex(const ValueKey('blur-layer-1')),
       lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
     );
-    expect(find.byType(BackdropFilter), findsNWidgets(4));
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsNWidgets(8));
   });
 
   testWidgets('bold applies to selected text instead of the whole block',
