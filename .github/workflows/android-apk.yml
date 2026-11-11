@@ -31,42 +31,17 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.5'
           channel: stable
-      - name: Install Linux build dependencies
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 180s sudo apt-get update \
-                -o Acquire::Retries=3 \
-                -o Acquire::ForceIPv4=true \
-                -o Acquire::http::Timeout=30 \
-                -o DPkg::Lock::Timeout=60 && \
-              timeout 180s sudo apt-get install -y --no-install-recommends \
-                -o Acquire::Retries=3 \
-                -o Acquire::ForceIPv4=true \
-                -o Acquire::http::Timeout=30 \
-                -o DPkg::Lock::Timeout=60 \
-                libgtk-3-dev; then
-              exit 0
-            fi
-            echo "Linux dependency install attempt $attempt failed; retrying..." >&2
-            sleep $((attempt * 5))
-          done
-          exit 1
-      - name: Generate and build Linux project
-        run: |
-          project="$RUNNER_TEMP/notes_app"
-          flutter create --no-pub --platforms=linux --org com.hyydra "$project"
-          cp pubspec.yaml "$project/"
-          cp -R lib/. "$project/lib/"
-          cd "$project"
-          flutter pub get
-          flutter build linux --release
+      - name: Validate source on Linux runner
+        run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
 
   windows:
     runs-on: windows-latest
