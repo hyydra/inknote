@@ -2,7 +2,7 @@
 
 - Goal: Replace persisted vector strokes with per-page raster drawings, remove drawing undo/redo, and keep text above drawing layers.
 - Owner: Copilot.
-- State: Committed as `de3c205` and pushed; included in the v0.4.17 build in progress.
+- State: Committed as `de3c205` and pushed; published in v0.4.17.
 
 ## Log
 
@@ -18,11 +18,11 @@
 
 ## Running now
 
-- Confirm v0.4.17 is published with both platform installers.
+- None; v0.4.17 is published with both platform installers.
 
 ## Next
 
-- Do not modify the unrelated untracked folders.
+- None; the migration is published in v0.4.17.
 
 ## Don't repeat
 
