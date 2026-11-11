@@ -39,7 +39,25 @@ jobs:
           flutter-version: '3.47.5'
           channel: stable
       - name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 180s sudo apt-get update \
+                -o Acquire::Retries=3 \
+                -o Acquire::ForceIPv4=true \
+                -o Acquire::http::Timeout=30 \
+                -o DPkg::Lock::Timeout=60 && \
+              timeout 180s sudo apt-get install -y --no-install-recommends \
+                -o Acquire::Retries=3 \
+                -o Acquire::ForceIPv4=true \
+                -o Acquire::http::Timeout=30 \
+                -o DPkg::Lock::Timeout=60 \
+                libgtk-3-dev; then
+              exit 0
+            fi
+            echo "Linux dependency install attempt $attempt failed; retrying..." >&2
+            sleep $((attempt * 5))
+          done
+          exit 1
       - name: Generate and build Linux project
         run: |
           project="$RUNNER_TEMP/notes_app"
