@@ -94,4 +94,36 @@ void main() {
       store.dispose();
     }
   });
+
+  test('repeated blur strokes preserve drawing outside the blur mask',
+      () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStrokes(
+        [line(10), line(60), line(110)],
+        canvasWidth: 120,
+        canvasPageHeight: 120,
+        pageCount: 1,
+      );
+
+      for (final x in [40.0, 60.0, 80.0]) {
+        await store.addStroke(
+          Stroke(
+            points: [CanvasPoint(x, 60)],
+            color: 0x00000000,
+            width: 44,
+            highlight: false,
+            blur: true,
+          ),
+          canvasWidth: 120,
+          canvasPageHeight: 120,
+          pageCount: 1,
+        );
+        expect(await alphaAt(store.pages[0]!, 50, 10), greaterThan(0));
+        expect(await alphaAt(store.pages[0]!, 50, 110), greaterThan(0));
+      }
+    } finally {
+      store.dispose();
+    }
+  });
 }

@@ -190,7 +190,7 @@ class RasterDrawingStore {
       await _updatePageWithStrokes(page, [stroke]);
       return;
     }
-    if (stroke.blur && previous == null) return;
+    if (previous == null) return;
     final bounds = Rect.fromLTWH(0, 0, width.toDouble(), pageHeight.toDouble());
     final pageOffsetY = page * pageHeight.toDouble();
     final localStroke = _translateStroke(stroke, dy: -pageOffsetY);
@@ -201,7 +201,7 @@ class RasterDrawingStore {
     final canvas = Canvas(recorder, bounds);
 
     if (erase) {
-      final eraseImage = previous!;
+      final eraseImage = previous;
       canvas.drawImage(eraseImage, Offset.zero, Paint());
       canvas.save();
       canvas.clipRect(clearBounds!);
@@ -219,6 +219,7 @@ class RasterDrawingStore {
       canvas.restore();
       canvas.restore();
     } else {
+      canvas.drawImage(previous, Offset.zero, Paint());
       final clip = BlurStrokeClipper(
         localStroke,
         widthScale: 1.5,
@@ -233,7 +234,7 @@ class RasterDrawingStore {
             ..blendMode = BlendMode.src
             ..imageFilter = ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         );
-        canvas.drawImage(previous!, Offset.zero, Paint());
+        canvas.drawImage(previous, Offset.zero, Paint());
         canvas.restore();
         canvas.restore();
       }
@@ -246,7 +247,7 @@ class RasterDrawingStore {
         image.dispose();
         return;
       }
-      previous?.dispose();
+      previous.dispose();
       pages[page] = image;
     } finally {
       picture.dispose();

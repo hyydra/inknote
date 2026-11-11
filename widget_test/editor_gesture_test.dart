@@ -195,7 +195,7 @@ void main() {
     expect(rasterPainter(tester).pages, contains(0));
   });
 
-  testWidgets('Android text and eraser tools use purpose-drawn icons',
+  testWidgets('Android toolbar shows a T and a recognizable eraser icon',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 740));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -214,6 +214,83 @@ void main() {
       find.byKey(const ValueKey('drawing-tool-icon-eraser')),
       findsOneWidget,
     );
+    expect(find.byIcon(Icons.backspace_outlined), findsNothing);
+  });
+
+  testWidgets('tapping the canvas adds text at that position', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Text'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    final tapPosition = tester.getTopLeft(canvas) + const Offset(220, 180);
+    await tester.tapAt(tapPosition);
+    await tester.pumpAndSettle();
+
+    final textBlock = find.byKey(const ValueKey('canvas-text-block-0'));
+    expect(textBlock, findsOneWidget);
+    final position = tester.widget<Positioned>(textBlock);
+    expect(position.left, closeTo(220, 1));
+    expect(position.top, closeTo(180, 1));
+
+    final textToolbar = find.byKey(const Key('text-toolbar'));
+    final drawingToolbar = find.byKey(const Key('android-drawing-toolbar'));
+    expect(textToolbar, findsOneWidget);
+    expect(drawingToolbar, findsOneWidget);
+    expect(
+      tester.getTopLeft(textToolbar).dy,
+      lessThan(tester.getTopLeft(drawingToolbar).dy),
+    );
+    expect(
+      find.descendant(
+        of: textToolbar,
+        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.byTooltip('Add text block'),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is DecoratedBox &&
+              widget.decoration is BoxDecoration &&
+              (widget.decoration as BoxDecoration).border != null,
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('drawing width can be adjusted for pen and pencil',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final widthSlider = find.byKey(const Key('stroke-width-slider'));
+    expect(tester.widget<Slider>(widthSlider).value, 3);
+    await tester.tap(find.byTooltip('Pencil'));
+    await tester.pump();
+    expect(tester.widget<Slider>(widthSlider).value, 2);
+
+    await tester.drag(widthSlider, const Offset(80, 0));
+    await tester.pump();
+    expect(tester.widget<Slider>(widthSlider).value, greaterThan(2));
   });
 
   testWidgets('legacy drawing migrates beneath text blocks', (tester) async {
@@ -513,7 +590,7 @@ void main() {
 
     expect(note.strokes, isEmpty);
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
   });
 
   testWidgets('open-source repositories are disclosed in the app',
@@ -659,6 +736,40 @@ void main() {
     );
   });
 
+  testWidgets('text reflows when a text block is resized narrower',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pumpAndSettle();
+    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
+    final fieldFinder = find.byKey(const ValueKey('canvas-text-field-0'));
+    await tester.enterText(fieldFinder, List.filled(70, 'reflow').join(' '));
+    await tester.pumpAndSettle();
+
+    Positioned block() => tester.widget<Positioned>(blockFinder);
+    final initialWidth = block().width!;
+    final initialHeight = block().height!;
+    await tester.drag(
+      find.byKey(const ValueKey('resize-text-block-0')),
+      const Offset(-160, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(block().width, lessThan(initialWidth));
+    expect(block().height, greaterThan(initialHeight));
+    expect(tester.widget<TextField>(fieldFinder).maxLines, isNull);
+  });
+
   testWidgets('migrated blur stays in the raster layer beneath text',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
@@ -793,7 +904,7 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('drawing-toolbar')), findsOneWidget);
     expect(find.byTooltip('Add text block'), findsOneWidget);
     expect(find.byTooltip('Lists'), findsOneWidget);
     expect(find.byTooltip('Text colour'), findsOneWidget);
@@ -803,6 +914,12 @@ void main() {
         matching: find.byType(ListView),
       ),
       findsNothing,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('text-toolbar'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('drawing-toolbar'))).dy,
+      ),
     );
 
     await tester.tap(find.byTooltip('Add text block'));
@@ -830,10 +947,23 @@ void main() {
     await tester.tap(find.byTooltip('Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
     expect(
       tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
       greaterThan(700),
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('text-toolbar'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('android-drawing-toolbar'))).dy,
+      ),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('text-toolbar')),
+        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
+      ),
+      findsOneWidget,
     );
     await tester.tap(find.byTooltip('Font size'));
     await tester.pumpAndSettle();

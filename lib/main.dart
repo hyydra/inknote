@@ -228,7 +228,10 @@ class _DrawingToolIcon extends StatelessWidget {
       return CustomPaint(
         key: const ValueKey('drawing-tool-icon-eraser'),
         size: Size.square(size),
-        painter: _EraserToolIconPainter(color),
+        painter: _EraserToolIconPainter(
+          color,
+          Theme.of(context).colorScheme.primary,
+        ),
       );
     }
     return Icon(_toolIconData(tool), size: size);
@@ -328,53 +331,55 @@ class _FontSizeMarkIconPainter extends CustomPainter {
 
 class _EraserToolIconPainter extends CustomPainter {
   final Color color;
+  final Color accentColor;
 
-  const _EraserToolIconPainter(this.color);
+  const _EraserToolIconPainter(this.color, this.accentColor);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final body = Path()
-      ..moveTo(size.width * 0.18, size.height * 0.62)
-      ..lineTo(size.width * 0.59, size.height * 0.21)
-      ..quadraticBezierTo(
-        size.width * 0.64,
-        size.height * 0.16,
-        size.width * 0.69,
-        size.height * 0.21,
-      )
-      ..lineTo(size.width * 0.84, size.height * 0.36)
-      ..quadraticBezierTo(
-        size.width * 0.89,
-        size.height * 0.41,
-        size.width * 0.84,
-        size.height * 0.46,
-      )
-      ..lineTo(size.width * 0.48, size.height * 0.82)
-      ..lineTo(size.width * 0.37, size.height * 0.82)
-      ..close();
-    canvas.drawPath(
-      body,
-      Paint()
-        ..color = color.withValues(alpha: 0.18)
-        ..style = PaintingStyle.fill,
+    final center = Offset(size.width / 2, size.height / 2);
+    final body = Rect.fromCenter(
+      center: Offset.zero,
+      width: size.shortestSide * 0.76,
+      height: size.shortestSide * 0.40,
     );
+    final rubber = RRect.fromRectAndRadius(
+      body,
+      Radius.circular(size.shortestSide * 0.055),
+    );
+    canvas
+      ..save()
+      ..translate(center.dx, center.dy)
+      ..rotate(-math.pi / 4);
+    canvas.drawRRect(
+      rubber,
+      Paint()..color = color.withValues(alpha: 0.16),
+    );
+    canvas.save();
+    canvas.clipRRect(rubber);
+    canvas.drawRect(
+      Rect.fromLTRB(body.left, body.top, 0, body.bottom),
+      Paint()..color = accentColor.withValues(alpha: 0.48),
+    );
+    canvas.restore();
     final outline = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = size.shortestSide * 0.09
       ..strokeJoin = StrokeJoin.round
       ..strokeCap = StrokeCap.round;
-    canvas.drawPath(body, outline);
+    canvas.drawRRect(rubber, outline);
     canvas.drawLine(
-      Offset(size.width * 0.40, size.height * 0.40),
-      Offset(size.width * 0.64, size.height * 0.64),
+      Offset(0, body.top),
+      Offset(0, body.bottom),
       outline,
     );
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _EraserToolIconPainter oldDelegate) =>
-      color != oldDelegate.color;
+      color != oldDelegate.color || accentColor != oldDelegate.accentColor;
 }
 
 class EditorPage extends StatefulWidget {
@@ -396,7 +401,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   DrawTool tool = DrawTool.pen;
   Color strokeColor = Colors.blue.shade800;
   Color highlighterColor = Colors.yellow;
-  double width = 3;
+  final Map<DrawTool, double> toolWidths = {
+    DrawTool.pencil: 2,
+    DrawTool.pen: 3,
+    DrawTool.highlighter: 22,
+    DrawTool.eraser: 36,
+    DrawTool.blur: 44,
+  };
   Stroke? active;
   Stroke? activeEraser;
   Stroke? activePreview;
@@ -638,16 +649,23 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     setState(() => hasUnsavedChanges = true);
   }
 
-  void addTextBlock() {
+  void addTextBlock() => _createTextBlock();
+
+  void _createTextBlock({Offset? position}) {
+    var addedIndex = 0;
     setState(() {
       showText = true;
       tool = DrawTool.text;
-      textBlockController.add();
+      addedIndex = textBlockController.add(
+        x: position?.dx,
+        y: position?.dy,
+      );
+      activeTextIndex = addedIndex;
     });
     _markChanged();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || textFocusNodes.isEmpty) return;
-      textFocusNodes.last.requestFocus();
+      if (!mounted || addedIndex >= textFocusNodes.length) return;
+      textFocusNodes[addedIndex].requestFocus();
     });
   }
 
@@ -674,6 +692,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         strokeColor = color;
       }
     });
+  }
+
+  double get _activeToolWidth => toolWidths[tool] ?? 3;
+
+  void _setActiveToolWidth(double value) {
+    setState(() => toolWidths[tool] = value);
   }
 
   void _selectTool(DrawTool nextTool) {
@@ -911,7 +935,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     lastSampleViewportPosition = viewportPoint;
     final scenePoint = _scenePoint(event);
     if (tool == DrawTool.eraser) {
-      final eraserWidth = 36 / canvasTransform.scale;
+      final eraserWidth = _activeToolWidth / canvasTransform.scale;
       setState(() {
         active = null;
         activePreview = null;
@@ -930,13 +954,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       active = Stroke(
         points: [scenePoint],
         color: _activeStrokeColor.toARGB32(),
-        width: tool == DrawTool.highlighter
-            ? 22
-            : tool == DrawTool.blur
-                ? 44
-                : tool == DrawTool.pencil
-                    ? 2
-                    : width,
+        width: _activeToolWidth,
         highlight: tool == DrawTool.highlighter,
         blur: tool == DrawTool.blur,
         opacity: tool == DrawTool.pencil ? 0.58 : 1,
@@ -1710,7 +1728,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (DrawTool.eraser, 'Eraser'),
       (DrawTool.blur, 'Blur'),
     ];
-    return SizedBox(
+    final toolbar = SizedBox(
       key: Key(
         Theme.of(context).platform == TargetPlatform.android
             ? 'android-drawing-toolbar'
@@ -1731,17 +1749,84 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         : null,
                   ),
                   onPressed: () => _selectTool(entry.$1),
-                  icon: _DrawingToolIcon(entry.$1),
+                  icon: _toolbarIconFrame(_DrawingToolIcon(entry.$1)),
                 ),
               ),
             Expanded(
               child: PopupMenuButton<Color>(
                 tooltip: 'Drawing colour',
-                icon: Icon(Icons.circle, color: _activeStrokeColor),
+                icon: _toolbarIconFrame(
+                  Icon(Icons.circle, color: _activeStrokeColor),
+                ),
                 onSelected: _setActiveStrokeColor,
                 itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (toolWidths.containsKey(tool)) _strokeWidthControls(),
+        toolbar,
+      ],
+    );
+  }
+
+  Widget _toolbarIconFrame(Widget child) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _strokeWidthControls() {
+    final width = _activeToolWidth;
+    final isEraser = tool == DrawTool.eraser;
+    final label = isEraser ? 'Eraser size' : 'Stroke width';
+    return SizedBox(
+      key: const Key('stroke-width-controls'),
+      height: 52,
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: Row(
+          children: [
+            const SizedBox(width: 8),
+            Tooltip(
+              message: label,
+              child: _toolbarIconFrame(const Icon(Icons.line_weight, size: 20)),
+            ),
+            Expanded(
+              child: Slider(
+                key: const Key('stroke-width-slider'),
+                min: 1,
+                max: 48,
+                divisions: 47,
+                value: width.clamp(1, 48).toDouble(),
+                label: '${width.round()} px',
+                semanticFormatterCallback: (value) => '${value.round()} pixels',
+                onChanged: _setActiveToolWidth,
+              ),
+            ),
+            SizedBox(
+              width: 48,
+              child: Text(
+                '${width.round()} px',
+                textAlign: TextAlign.end,
+              ),
+            ),
+            const SizedBox(width: 12),
           ],
         ),
       ),
@@ -1760,17 +1845,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         color: Theme.of(context).colorScheme.surfaceContainerLow,
         child: Row(
           children: [
-            slot(IconButton(
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Drawing tools',
               onPressed: () => _selectTool(DrawTool.pen),
               icon: const Icon(Icons.gesture),
-            )),
-            slot(IconButton(
+            ))),
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Add text block',
               onPressed: addTextBlock,
-              icon: const Icon(Icons.add_box_outlined),
-            )),
-            slot(PopupMenuButton<String>(
+              icon: _DrawingToolIcon(DrawTool.text, size: 20),
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<String>(
               tooltip: 'Lists',
               enabled: canFormat,
               icon: const Icon(Icons.check_box_outlined),
@@ -1805,8 +1890,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ]),
                 ),
               ],
-            )),
-            slot(PopupMenuButton<Color>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<Color>(
               tooltip: 'Text colour',
               enabled: canFormat,
               onSelected: _setTextColor,
@@ -1817,8 +1902,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               itemBuilder: (_) => _colorMenuItems(
                 format == null ? Colors.black : Color(format.color),
               ),
-            )),
-            slot(PopupMenuButton<double>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<double>(
               tooltip: 'Font size',
               enabled: canFormat,
               icon: Text(
@@ -1839,14 +1924,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ]),
                   ),
               ],
-            )),
-            slot(IconButton(
+            ))),
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Bold',
               isSelected: format?.bold ?? false,
               onPressed: canFormat ? _toggleTextBold : null,
               icon: const Icon(Icons.format_bold),
-            )),
-            slot(PopupMenuButton<bool>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<bool>(
               tooltip: 'Indent',
               enabled: canFormat,
               icon: const Icon(Icons.format_indent_increase),
@@ -1869,7 +1954,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ]),
                 ),
               ],
-            )),
+            ))),
           ],
         ),
       ),
@@ -2542,10 +2627,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                 Positioned.fill(
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: tool == DrawTool.text
-                                        ? () => FocusManager
-                                            .instance.primaryFocus
-                                            ?.unfocus()
+                                    onTapUp: tool == DrawTool.text
+                                        ? (details) => _createTextBlock(
+                                              position: details.localPosition,
+                                            )
                                         : null,
                                     child: CustomPaint(
                                       painter: StrokePainter(
@@ -2704,7 +2789,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       : _availableUpdateRow(update),
                 ),
               if (tool == DrawTool.text)
-                SafeArea(top: false, child: _textToolbar())
+                SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _textToolbar(),
+                      _drawingToolbar(),
+                    ],
+                  ),
+                )
               else
                 SafeArea(
                   top: false,
