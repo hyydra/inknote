@@ -2173,7 +2173,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   },
                 ),
               ),
-              if (Platform.isAndroid || Platform.isWindows)
+              if (Theme.of(context).platform == TargetPlatform.android ||
+                  Theme.of(context).platform == TargetPlatform.windows)
                 ValueListenableBuilder<UpdateInfo?>(
                   valueListenable: UpdateService.availableUpdate,
                   builder: (context, update, _) => update == null
