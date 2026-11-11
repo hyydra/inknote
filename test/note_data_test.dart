@@ -51,7 +51,14 @@ Future<void> main() async {
     ..y = 234
     ..width = 456
     ..height = 178
-    ..fontSize = 24;
+    ..fontSize = 24
+    ..styles.add(TextStyleRange(
+      start: 0,
+      end: 5,
+      bold: true,
+      color: 0xffd7a842,
+      fontSize: 30,
+    ));
   final positionedRoundTrip = Note.fromJson(blocksRoundTrip.toJson());
   expectEqual(positionedRoundTrip.textBlockFormats.first.x, 123.0,
       'text block x position survives serialization');
@@ -63,7 +70,26 @@ Future<void> main() async {
       'text block height survives serialization');
   expectEqual(positionedRoundTrip.textBlockFormats.first.fontSize, 24.0,
       'text block font size survives serialization');
+  final richStyle = positionedRoundTrip.textBlockFormats.first.styles.single;
+  expectEqual(richStyle.start, 0, 'rich text start survives serialization');
+  expectEqual(richStyle.end, 5, 'rich text end survives serialization');
+  expectEqual(richStyle.bold, true, 'rich text bold survives serialization');
+  expectEqual(
+      richStyle.color, 0xffd7a842, 'rich text colour survives serialization');
+  expectEqual(
+      richStyle.fontSize, 30.0, 'rich text size survives serialization');
   print('PASS multiple text blocks survive serialization');
+
+  final blurStroke = Stroke.fromJson(Stroke(
+    points: const [CanvasPoint(10, 20), CanvasPoint(30, 40)],
+    color: 0x00000000,
+    width: 44,
+    highlight: false,
+    blur: true,
+  ).toJson());
+  expectEqual(blurStroke.blur, true, 'pixel blur mask survives serialization');
+  expectEqual(blurStroke.width, 44.0, 'pixel blur brush width survives');
+  print('PASS pixel blur masks survive serialization');
 
   var rejectedFutureVersion = false;
   try {

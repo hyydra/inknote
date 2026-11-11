@@ -17,6 +17,7 @@ class Stroke {
   final int color;
   final double width;
   final bool highlight;
+  final bool blur;
   final double opacity;
 
   Stroke({
@@ -24,6 +25,7 @@ class Stroke {
     required this.color,
     required this.width,
     required this.highlight,
+    this.blur = false,
     this.opacity = 1,
   });
 
@@ -37,6 +39,7 @@ class Stroke {
         color: value['color'] as int,
         width: (value['width'] as num).toDouble(),
         highlight: value['highlight'] as bool? ?? false,
+        blur: value['blur'] as bool? ?? false,
         opacity: (value['opacity'] as num?)?.toDouble() ?? 1,
       );
 
@@ -45,6 +48,7 @@ class Stroke {
         'color': color,
         'width': width,
         'highlight': highlight,
+        'blur': blur,
         'opacity': opacity,
       };
 }
@@ -71,6 +75,38 @@ class TaskItem {
   Map<String, dynamic> toJson() => {'text': text, 'done': done};
 }
 
+class TextStyleRange {
+  int start;
+  int end;
+  bool? bold;
+  int? color;
+  double? fontSize;
+
+  TextStyleRange({
+    required this.start,
+    required this.end,
+    this.bold,
+    this.color,
+    this.fontSize,
+  });
+
+  factory TextStyleRange.fromJson(Map<String, dynamic> value) => TextStyleRange(
+        start: value['start'] as int,
+        end: value['end'] as int,
+        bold: value['bold'] as bool?,
+        color: value['color'] as int?,
+        fontSize: (value['fontSize'] as num?)?.toDouble(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'start': start,
+        'end': end,
+        if (bold != null) 'bold': bold,
+        if (color != null) 'color': color,
+        if (fontSize != null) 'fontSize': fontSize,
+      };
+}
+
 class TextBlockFormat {
   bool bold;
   int color;
@@ -79,6 +115,7 @@ class TextBlockFormat {
   double y;
   double width;
   double height;
+  List<TextStyleRange> styles;
 
   TextBlockFormat({
     this.bold = false,
@@ -88,7 +125,8 @@ class TextBlockFormat {
     this.y = 48,
     this.width = 320,
     this.height = 160,
-  });
+    List<TextStyleRange>? styles,
+  }) : styles = styles ?? [];
 
   factory TextBlockFormat.fromJson(Map<String, dynamic> value) =>
       TextBlockFormat(
@@ -99,6 +137,11 @@ class TextBlockFormat {
         y: (value['y'] as num?)?.toDouble() ?? 48,
         width: (value['width'] as num?)?.toDouble() ?? 320,
         height: (value['height'] as num?)?.toDouble() ?? 160,
+        styles: (value['styles'] as List? ?? const [])
+            .map((item) => TextStyleRange.fromJson(
+                  Map<String, dynamic>.from(item as Map),
+                ))
+            .toList(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -109,11 +152,12 @@ class TextBlockFormat {
         'y': y,
         'width': width,
         'height': height,
+        'styles': styles.map((style) => style.toJson()).toList(),
       };
 }
 
 class Note {
-  static const int currentFormatVersion = 4;
+  static const int currentFormatVersion = 5;
 
   String id;
   String title;

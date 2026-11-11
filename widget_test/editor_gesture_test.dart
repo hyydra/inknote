@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
+import 'package:notes_app/rich_text_controller.dart';
 
 Note noteWithStroke() => Note(
       id: 'gesture-note',
@@ -39,6 +40,49 @@ void main() {
     expect(undo.onPressed, isNotNull);
   });
 
+  testWidgets('the highlighter starts in yellow', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Highlighter'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    await tester.pump();
+
+    expect(note.strokes.last.highlight, isTrue);
+    expect(note.strokes.last.color, Colors.yellow.toARGB32());
+  });
+
+  testWidgets('the blur tool creates a pixel blur mask', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Blur'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    await tester.pump();
+
+    expect(note.strokes.last.blur, isTrue);
+    expect(note.strokes.last.width, 44);
+    expect(find.byType(BackdropFilter), findsWidgets);
+  });
+
   testWidgets('the editor fits a narrow Android phone viewport',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 740));
@@ -53,9 +97,21 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byType(InteractiveViewer), findsOneWidget);
+    expect(find.byTooltip('Blur'), findsOneWidget);
     expect(
       tester.getCenter(find.byKey(const Key('android-drawing-toolbar'))).dy,
       greaterThan(600),
+    );
+
+    await tester.tap(find.byTooltip('Drawing colour'));
+    await tester.pumpAndSettle();
+    expect(find.text('Black'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is PopupMenuItem<Color>,
+        skipOffstage: false,
+      ),
+      findsNWidgets(8),
     );
   });
 
@@ -133,6 +189,47 @@ void main() {
     await tester.pump();
     expect(block().width, greaterThan(initialWidth));
     expect(block().height, greaterThan(initialHeight));
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('resize-text-block-0')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('bold applies to selected text instead of the whole block',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'rich-text-note',
+      title: 'Rich text',
+      textBlocks: const ['gold ink'],
+      updated: DateTime.utc(2026, 11, 10),
+      strokes: [],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+    );
+    final controller = field.controller! as RichTextEditingController;
+    controller.selection = const TextSelection(baseOffset: 0, extentOffset: 4);
+    await tester.tap(find.byTooltip('Bold'));
+    await tester.pump();
+
+    expect(note.textBlockFormats.first.bold, isFalse);
+    expect(controller.styles.single.start, 0);
+    expect(controller.styles.single.end, 4);
+    expect(controller.styles.single.bold, isTrue);
   });
 
   testWidgets('Windows shows a dedicated bottom toolbar in text mode',
@@ -152,6 +249,7 @@ void main() {
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
     expect(find.byTooltip('Add text block'), findsOneWidget);
     expect(find.byTooltip('Lists'), findsOneWidget);
+    expect(find.byTooltip('Text colour'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('text-toolbar')),
@@ -223,7 +321,7 @@ void main() {
 
   testWidgets('Windows displays automatic update status and version',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    await tester.binding.setSurfaceSize(const Size(1600, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
@@ -232,7 +330,10 @@ void main() {
       ),
     );
 
-    expect(find.text('Auto updates · v$appVersion'), findsOneWidget);
+    expect(
+      find.text('Auto updates · v$appVersion', skipOffstage: false),
+      findsOneWidget,
+    );
     expect(find.byTooltip('Check for updates'), findsWidgets);
   });
 }

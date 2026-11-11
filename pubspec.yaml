@@ -1,7 +1,7 @@
 name: notes_app
 description: A handwriting-first note app for Android, Linux and Windows.
 publish_to: none
-version: 0.4.5+9
+version: 0.4.6+10
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:
@@ -14,5 +14,15 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  image_path: assets/pennino-icon.png
+  min_sdk_android: 23
+  windows:
+    generate: true
+    image_path: assets/pennino-icon.png
+    icon_size: 256
