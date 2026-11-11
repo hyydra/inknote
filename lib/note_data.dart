@@ -1,15 +1,41 @@
 class CanvasPoint {
   final double x;
   final double y;
+  final double pressure;
+  final double pressureMin;
+  final double pressureMax;
+  final double tilt;
+  final double orientation;
 
-  const CanvasPoint(this.x, this.y);
+  const CanvasPoint(
+    this.x,
+    this.y, {
+    this.pressure = 1,
+    this.pressureMin = 0,
+    this.pressureMax = 1,
+    this.tilt = 0,
+    this.orientation = 0,
+  });
 
   factory CanvasPoint.fromJson(Map<String, dynamic> value) => CanvasPoint(
         (value['x'] as num).toDouble(),
         (value['y'] as num).toDouble(),
+        pressure: (value['pressure'] as num?)?.toDouble() ?? 1,
+        pressureMin: (value['pressureMin'] as num?)?.toDouble() ?? 0,
+        pressureMax: (value['pressureMax'] as num?)?.toDouble() ?? 1,
+        tilt: (value['tilt'] as num?)?.toDouble() ?? 0,
+        orientation: (value['orientation'] as num?)?.toDouble() ?? 0,
       );
 
-  Map<String, dynamic> toJson() => {'x': x, 'y': y};
+  Map<String, dynamic> toJson() => {
+        'x': x,
+        'y': y,
+        'pressure': pressure,
+        'pressureMin': pressureMin,
+        'pressureMax': pressureMax,
+        'tilt': tilt,
+        'orientation': orientation,
+      };
 }
 
 class Stroke {
@@ -19,6 +45,7 @@ class Stroke {
   final bool highlight;
   final bool blur;
   final double opacity;
+  final bool pressureSensitive;
 
   Stroke({
     required this.points,
@@ -27,6 +54,7 @@ class Stroke {
     required this.highlight,
     this.blur = false,
     this.opacity = 1,
+    this.pressureSensitive = false,
   });
 
   factory Stroke.fromJson(Map<String, dynamic> value) => Stroke(
@@ -41,6 +69,7 @@ class Stroke {
         highlight: value['highlight'] as bool? ?? false,
         blur: value['blur'] as bool? ?? false,
         opacity: (value['opacity'] as num?)?.toDouble() ?? 1,
+        pressureSensitive: value['pressureSensitive'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -50,6 +79,7 @@ class Stroke {
         'highlight': highlight,
         'blur': blur,
         'opacity': opacity,
+        'pressureSensitive': pressureSensitive,
       };
 }
 

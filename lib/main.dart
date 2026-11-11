@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:draw_your_image/draw_your_image.dart' as draw_engine;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
@@ -463,6 +464,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   Offset? lastSelectionViewportPoint;
   bool selectionMoved = false;
   bool gestureHistoryRecorded = false;
+  final Map<int, Offset> canvasPointerPositions = {};
+  int? drawingPointer;
   late final AutosaveController autosave;
   final StrokeHistory strokeHistory = StrokeHistory();
   final store = NoteStore(directoryProvider: _noteDirectory);
@@ -843,11 +846,26 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  CanvasPoint _scenePoint(Offset viewportPoint) => canvasTransform
-      .sceneFromViewport(CanvasPoint(viewportPoint.dx, viewportPoint.dy));
+  CanvasPoint _scenePoint(PointerEvent event) {
+    final viewportPoint = event.localPosition;
+    final scenePoint = canvasTransform.sceneFromViewport(
+      CanvasPoint(viewportPoint.dx, viewportPoint.dy),
+    );
+    final hasPressureRange = event.pressureMax - event.pressureMin > 0.0001;
+    return CanvasPoint(
+      scenePoint.x,
+      scenePoint.y,
+      pressure: hasPressureRange ? event.pressure : 1,
+      pressureMin: hasPressureRange ? event.pressureMin : 0,
+      pressureMax: hasPressureRange ? event.pressureMax : 1,
+      tilt: event.tilt,
+      orientation: event.orientation,
+    );
+  }
 
-  void begin(Offset viewportPoint) {
-    if (tool == DrawTool.hand) return;
+  void begin(PointerDownEvent event) {
+    if (tool == DrawTool.hand || tool == DrawTool.text) return;
+    final viewportPoint = event.localPosition;
     gestureHistoryRecorded = false;
     if (tool == DrawTool.select) {
       final selected = hitTestStrokeAtViewport(
@@ -868,7 +886,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       erase(viewportPoint);
       return;
     }
-    final scenePoint = _scenePoint(viewportPoint);
+    final scenePoint = _scenePoint(event);
     strokeHistory.record(widget.note.strokes);
     gestureHistoryRecorded = true;
     setState(() {
@@ -886,12 +904,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         highlight: tool == DrawTool.highlighter,
         blur: tool == DrawTool.blur,
         opacity: tool == DrawTool.pencil ? 0.58 : 1,
+        pressureSensitive: tool == DrawTool.pen || tool == DrawTool.pencil,
       );
     });
   }
 
-  void move(Offset viewportPoint) {
-    if (tool == DrawTool.hand) return;
+  void move(PointerMoveEvent event) {
+    if (tool == DrawTool.hand || tool == DrawTool.text) return;
+    final viewportPoint = event.localPosition;
     if (tool == DrawTool.select) {
       final previous = lastSelectionViewportPoint;
       if (previous == null || selectedStrokes.isEmpty) return;
@@ -922,7 +942,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     if (active == null) return;
-    final scenePoint = _scenePoint(viewportPoint);
+    final scenePoint = _scenePoint(event);
     setState(() => active!.points.add(scenePoint));
   }
 
@@ -936,6 +956,68 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     _finalizeActiveStroke();
+  }
+
+  void _canvasPointerDown(PointerDownEvent event) {
+    canvasPointerPositions[event.pointer] = event.localPosition;
+    if (canvasPointerPositions.length == 1) {
+      drawingPointer = event.pointer;
+      begin(event);
+      return;
+    }
+    drawingPointer = null;
+    if (active != null) {
+      setState(() {
+        active = null;
+        gestureHistoryRecorded = false;
+      });
+    }
+  }
+
+  void _canvasPointerMove(PointerMoveEvent event) {
+    final previousPositions = Map<int, Offset>.from(canvasPointerPositions);
+    if (!canvasPointerPositions.containsKey(event.pointer)) return;
+    canvasPointerPositions[event.pointer] = event.localPosition;
+    if (canvasPointerPositions.length >= 2) {
+      final pointers = canvasPointerPositions.keys.take(2).toList();
+      final first = pointers[0];
+      final second = pointers[1];
+      final previousFirst = previousPositions[first];
+      final previousSecond = previousPositions[second];
+      if (previousFirst == null || previousSecond == null) return;
+      final currentFirst = canvasPointerPositions[first]!;
+      final currentSecond = canvasPointerPositions[second]!;
+      final previousCenter = (previousFirst + previousSecond) / 2;
+      final currentCenter = (currentFirst + currentSecond) / 2;
+      final previousDistance = (previousFirst - previousSecond).distance;
+      final currentDistance = (currentFirst - currentSecond).distance;
+      final transform = canvasTransform;
+      final nextScale = previousDistance < 0.001
+          ? transform.scale
+          : (transform.scale * currentDistance / previousDistance)
+              .clamp(0.25, 5.0);
+      final sceneX =
+          (previousCenter.dx - transform.translationX) / transform.scale;
+      final sceneY =
+          (previousCenter.dy - transform.translationY) / transform.scale;
+      final next = Matrix4.identity();
+      next[0] = nextScale;
+      next[5] = nextScale;
+      next[12] = currentCenter.dx - sceneX * nextScale;
+      next[13] = currentCenter.dy - sceneY * nextScale;
+      transformationController.value = next;
+      setState(() {});
+      return;
+    }
+    if (drawingPointer == event.pointer) move(event);
+  }
+
+  void _canvasPointerEnd(PointerEvent event) {
+    if (drawingPointer == event.pointer && canvasPointerPositions.length == 1) {
+      end();
+    }
+    canvasPointerPositions.remove(event.pointer);
+    if (canvasPointerPositions.isEmpty) drawingPointer = null;
   }
 
   void _finalizeActiveStroke() {
@@ -960,21 +1042,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
     setState(() {
       widget.note.strokes.removeAt(index);
-      selectedStrokes.clear();
-    });
-    _markChanged();
-  }
-
-  void deleteSelection() {
-    if (selectedStrokes.isEmpty) return;
-    final indices = selectedStrokes.toList()..sort((a, b) => b.compareTo(a));
-    strokeHistory.record(widget.note.strokes);
-    setState(() {
-      for (final index in indices) {
-        if (index >= 0 && index < widget.note.strokes.length) {
-          widget.note.strokes.removeAt(index);
-        }
-      }
       selectedStrokes.clear();
     });
     _markChanged();
@@ -1390,7 +1457,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _androidDrawingToolbar() {
     final tools = [
-      (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
       (DrawTool.text, Icons.text_fields, 'Text'),
       (DrawTool.select, Icons.select_all, 'Select'),
       (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
@@ -1420,18 +1486,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ),
               ),
             Expanded(
-              child: selectedStrokes.isNotEmpty
-                  ? IconButton(
-                      tooltip: 'Delete selection',
-                      onPressed: deleteSelection,
-                      icon: const Icon(Icons.delete_outline),
-                    )
-                  : PopupMenuButton<Color>(
-                      tooltip: 'Drawing colour',
-                      icon: Icon(Icons.circle, color: _activeStrokeColor),
-                      onSelected: _setActiveStrokeColor,
-                      itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
-                    ),
+              child: PopupMenuButton<Color>(
+                tooltip: 'Drawing colour',
+                icon: Icon(Icons.circle, color: _activeStrokeColor),
+                onSelected: _setActiveStrokeColor,
+                itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
+              ),
             ),
           ],
         ),
@@ -1771,6 +1831,41 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showOpenSourceNotice() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Open-source software'),
+        content: const SingleChildScrollView(
+          child: SelectableText(
+            'Pennino uses Flutter and these direct open-source packages:\n\n'
+            'draw_your_image\n'
+            'github.com/chooyan-eng/draw_your_image\n\n'
+            'file_selector, path_provider and uuid\n\n'
+            'Repository links and licences are also listed in the README.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              showLicensePage(
+                context: context,
+                applicationName: 'Pennino',
+                applicationVersion: appVersion,
+              );
+            },
+            child: const Text('Licences'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => PopScope(
         canPop: false,
@@ -1903,6 +1998,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     case 'update':
                       UpdateService.prompt(context);
                       return;
+                    case 'open-source':
+                      _showOpenSourceNotice();
+                      return;
                   }
                 },
                 itemBuilder: (_) => [
@@ -1961,6 +2059,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         title: Text('Check for updates'),
                       ),
                     ),
+                  const PopupMenuItem(
+                    value: 'open-source',
+                    child: ListTile(
+                      leading: Icon(Icons.code),
+                      title: Text('Open-source software'),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -1975,7 +2080,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     children: [
                       for (final entry in [
-                        (DrawTool.hand, Icons.pan_tool_outlined, 'Hand'),
                         (DrawTool.text, Icons.text_fields, 'Text'),
                         (DrawTool.select, Icons.select_all, 'Select'),
                         (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
@@ -2008,15 +2112,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             label: Text('Auto updates · v$appVersion'),
                             tooltip: 'Check for updates',
                             onPressed: () => UpdateService.prompt(context),
-                          ),
-                        ),
-                      if (selectedStrokes.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(4),
-                          child: ActionChip(
-                            avatar: const Icon(Icons.delete_outline, size: 18),
-                            label: const Text('Delete selection'),
-                            onPressed: deleteSelection,
                           ),
                         ),
                       Padding(
@@ -2105,128 +2200,118 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     final canvasWidth = math.max(2000.0, constraints.maxWidth);
                     final canvasHeight =
                         math.max(3000.0, constraints.maxHeight * 3);
-                    final isHandTool =
-                        tool == DrawTool.hand || tool == DrawTool.text;
                     return ClipRect(
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
-                        onPointerDown: isHandTool
-                            ? null
-                            : (event) => begin(event.localPosition),
-                        onPointerMove: isHandTool
-                            ? null
-                            : (event) => move(event.localPosition),
-                        onPointerUp: isHandTool ? null : (_) => end(),
-                        onPointerCancel: isHandTool ? null : (_) => end(),
-                        child: IgnorePointer(
-                          ignoring: !isHandTool,
-                          child: InteractiveViewer(
-                            transformationController: transformationController,
-                            alignment: Alignment.topLeft,
-                            constrained: false,
-                            panEnabled: tool == DrawTool.hand,
-                            scaleEnabled: tool == DrawTool.hand,
-                            boundaryMargin: const EdgeInsets.all(500),
-                            minScale: 0.25,
-                            maxScale: 5,
-                            child: SizedBox(
-                              width: canvasWidth,
-                              height: canvasHeight,
-                              child: Stack(
-                                key: const Key('canvas-layer-stack'),
-                                clipBehavior: Clip.none,
-                                children: [
-                                  Positioned.fill(
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: tool == DrawTool.text
-                                          ? () => FocusManager
-                                              .instance.primaryFocus
-                                              ?.unfocus()
-                                          : null,
-                                      child: CustomPaint(
-                                        painter: StrokePainter(
-                                          const [],
-                                          null,
-                                          background: Color(
-                                            widget.note.backgroundColor,
-                                          ),
-                                          pattern:
-                                              PaperPattern.values.firstWhere(
-                                            (item) =>
-                                                item.name ==
-                                                widget.note.backgroundPattern,
-                                            orElse: () => PaperPattern.lined,
-                                          ),
+                        onPointerDown: _canvasPointerDown,
+                        onPointerMove: _canvasPointerMove,
+                        onPointerUp: _canvasPointerEnd,
+                        onPointerCancel: _canvasPointerEnd,
+                        child: InteractiveViewer(
+                          transformationController: transformationController,
+                          alignment: Alignment.topLeft,
+                          constrained: false,
+                          panEnabled: false,
+                          scaleEnabled: false,
+                          boundaryMargin: const EdgeInsets.all(500),
+                          minScale: 0.25,
+                          maxScale: 5,
+                          child: SizedBox(
+                            width: canvasWidth,
+                            height: canvasHeight,
+                            child: Stack(
+                              key: const Key('canvas-layer-stack'),
+                              clipBehavior: Clip.none,
+                              children: [
+                                Positioned.fill(
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: tool == DrawTool.text
+                                        ? () => FocusManager
+                                            .instance.primaryFocus
+                                            ?.unfocus()
+                                        : null,
+                                    child: CustomPaint(
+                                      painter: StrokePainter(
+                                        const [],
+                                        null,
+                                        background: Color(
+                                          widget.note.backgroundColor,
+                                        ),
+                                        pattern: PaperPattern.values.firstWhere(
+                                          (item) =>
+                                              item.name ==
+                                              widget.note.backgroundPattern,
+                                          orElse: () => PaperPattern.lined,
                                         ),
                                       ),
                                     ),
                                   ),
-                                  if (showText)
-                                    for (var index = 0;
-                                        index < textControllers.length;
-                                        index++)
-                                      _canvasTextBlock(index),
+                                ),
+                                if (showText)
                                   for (var index = 0;
-                                      index < widget.note.strokes.length;
+                                      index < textControllers.length;
                                       index++)
-                                    if (widget.note.strokes[index].blur)
-                                      _blurStrokeLayer(
-                                        widget.note.strokes[index],
-                                        key: ValueKey('blur-layer-$index'),
-                                      )
-                                    else
-                                      Positioned.fill(
-                                        key: ValueKey('stroke-layer-$index'),
-                                        child: IgnorePointer(
-                                          child: CustomPaint(
-                                            painter: StrokePainter(
-                                              [widget.note.strokes[index]],
-                                              null,
-                                              paintBackground: false,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  if (active != null && active!.blur)
+                                    _canvasTextBlock(index),
+                                for (var index = 0;
+                                    index < widget.note.strokes.length;
+                                    index++)
+                                  if (widget.note.strokes[index].blur)
                                     _blurStrokeLayer(
-                                      active!,
-                                      key: const Key('active-blur-layer'),
+                                      widget.note.strokes[index],
+                                      key: ValueKey('blur-layer-$index'),
                                     )
-                                  else if (active != null)
+                                  else
                                     Positioned.fill(
-                                      key: const Key('active-stroke-layer'),
+                                      key: ValueKey('stroke-layer-$index'),
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: StrokePainter(
-                                            [active!],
+                                            [widget.note.strokes[index]],
                                             null,
                                             paintBackground: false,
                                           ),
                                         ),
                                       ),
                                     ),
+                                if (active != null && active!.blur)
+                                  _blurStrokeLayer(
+                                    active!,
+                                    key: const Key('active-blur-layer'),
+                                  )
+                                else if (active != null)
                                   Positioned.fill(
+                                    key: const Key('active-stroke-layer'),
                                     child: IgnorePointer(
                                       child: CustomPaint(
                                         painter: StrokePainter(
-                                          widget.note.strokes,
+                                          [active!],
                                           null,
                                           paintBackground: false,
-                                          paintStrokes: false,
-                                          selectedIndices: selectedStrokes,
-                                          selectionScale: canvasTransform.scale,
                                         ),
                                       ),
                                     ),
                                   ),
-                                  if (showText)
-                                    for (var index = 0;
-                                        index < textControllers.length;
-                                        index++)
-                                      _canvasTextBlockControls(index),
-                                ],
-                              ),
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: StrokePainter(
+                                        widget.note.strokes,
+                                        null,
+                                        paintBackground: false,
+                                        paintStrokes: false,
+                                        selectedIndices: selectedStrokes,
+                                        selectionScale: canvasTransform.scale,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (showText)
+                                  for (var index = 0;
+                                      index < textControllers.length;
+                                      index++)
+                                    _canvasTextBlockControls(index),
+                              ],
                             ),
                           ),
                         ),
@@ -2267,6 +2352,58 @@ class StrokePainter extends CustomPainter {
     this.paintBackground = true,
     this.paintStrokes = true,
   });
+
+  draw_engine.Stroke _engineStroke(Stroke stroke) => draw_engine.Stroke(
+        deviceKind: ui.PointerDeviceKind.stylus,
+        points: stroke.points
+            .map(
+              (point) => draw_engine.StrokePoint(
+                position: Offset(point.x, point.y),
+                pressure: point.pressure,
+                pressureMin: point.pressureMin,
+                pressureMax: point.pressureMax,
+                tilt: point.tilt,
+                orientation: point.orientation,
+              ),
+            )
+            .toList(),
+        color: Color(stroke.color),
+        width: stroke.width,
+      );
+
+  double _pressureWidth(
+    draw_engine.StrokePoint point,
+    double baseWidth,
+  ) {
+    final pressureFactor = 0.25 + point.normalizedPressure * 0.75;
+    final tiltFactor = 1 + math.sin(point.tilt).abs() * 0.30;
+    return baseWidth * pressureFactor * tiltFactor;
+  }
+
+  void _paintPressureStroke(
+    Canvas canvas,
+    draw_engine.Stroke stroke,
+    Paint paint,
+  ) {
+    if (stroke.points.length == 1) {
+      paint.strokeWidth = _pressureWidth(stroke.points.single, stroke.width);
+      canvas.drawPoints(
+        ui.PointMode.points,
+        [stroke.points.single.position],
+        paint,
+      );
+      return;
+    }
+    for (var index = 1; index < stroke.points.length; index++) {
+      final from = stroke.points[index - 1];
+      final to = stroke.points[index];
+      paint.strokeWidth = (_pressureWidth(from, stroke.width) +
+              _pressureWidth(to, stroke.width)) /
+          2;
+      canvas.drawLine(from.position, to.position, paint);
+    }
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (paintBackground) {
@@ -2297,6 +2434,7 @@ class StrokePainter extends CustomPainter {
     if (paintStrokes) {
       for (final s in [...strokes, if (active != null) active!]) {
         if (s.points.isEmpty || s.blur) continue;
+        final engineStroke = _engineStroke(s);
         final p = Paint()
           ..color =
               Color(s.color).withValues(alpha: s.highlight ? 0.32 : s.opacity)
@@ -2304,17 +2442,20 @@ class StrokePainter extends CustomPainter {
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
           ..style = PaintingStyle.stroke;
-        if (s.points.length == 1) {
+        if (s.pressureSensitive) {
+          _paintPressureStroke(canvas, engineStroke, p);
+          continue;
+        }
+        if (engineStroke.points.length == 1) {
           canvas.drawPoints(
               ui.PointMode.points,
               [
-                Offset(s.points.first.x, s.points.first.y),
+                engineStroke.points.first.position,
               ],
               p);
           continue;
         }
-        final path = Path()..moveTo(s.points.first.x, s.points.first.y);
-        for (final pt in s.points.skip(1)) path.lineTo(pt.x, pt.y);
+        final path = draw_engine.PathBuilderMode.none.converter(engineStroke);
         canvas.drawPath(path, p);
       }
     }

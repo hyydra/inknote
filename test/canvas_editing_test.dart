@@ -103,6 +103,29 @@ void main() {
     0xff000000,
     'moving a selection preserves stroke style',
   );
+  final dynamicStroke = [
+    Stroke(
+      points: const [
+        CanvasPoint(10, 20, pressure: 0.7, tilt: 0.3, orientation: 1.1),
+      ],
+      color: 0xff000000,
+      width: 4,
+      highlight: false,
+      pressureSensitive: true,
+    ),
+  ];
+  translateSelectedFromViewportDelta(
+    dynamicStroke,
+    {0},
+    const CanvasPoint(10, 10),
+    const CanvasTransform(scale: 1),
+  );
+  expectEqual(dynamicStroke.single.pressureSensitive, true,
+      'moving preserves pressure-aware stroke mode');
+  expectClose(dynamicStroke.single.points.single.pressure, 0.7,
+      'moving preserves stylus pressure');
+  expectClose(dynamicStroke.single.points.single.tilt, 0.3,
+      'moving preserves stylus tilt');
   print('PASS selected strokes move consistently at different zooms');
 
   final invalidSelection = [stroke(1, 1, 2, 2)];

@@ -105,8 +105,15 @@ bool translateSelectedFromViewportDelta(
     strokes[index] = Stroke(
       points: stroke.points
           .map(
-            (point) =>
-                CanvasPoint(point.x + sceneDelta.x, point.y + sceneDelta.y),
+            (point) => CanvasPoint(
+              point.x + sceneDelta.x,
+              point.y + sceneDelta.y,
+              pressure: point.pressure,
+              pressureMin: point.pressureMin,
+              pressureMax: point.pressureMax,
+              tilt: point.tilt,
+              orientation: point.orientation,
+            ),
           )
           .toList(),
       color: stroke.color,
@@ -114,6 +121,7 @@ bool translateSelectedFromViewportDelta(
       highlight: stroke.highlight,
       blur: stroke.blur,
       opacity: stroke.opacity,
+      pressureSensitive: stroke.pressureSensitive,
     );
     changed = true;
   }
@@ -184,13 +192,22 @@ List<Stroke> _cloneStrokes(List<Stroke> strokes) => strokes
     .map(
       (stroke) => Stroke(
         points: stroke.points
-            .map((point) => CanvasPoint(point.x, point.y))
+            .map((point) => CanvasPoint(
+                  point.x,
+                  point.y,
+                  pressure: point.pressure,
+                  pressureMin: point.pressureMin,
+                  pressureMax: point.pressureMax,
+                  tilt: point.tilt,
+                  orientation: point.orientation,
+                ))
             .toList(),
         color: stroke.color,
         width: stroke.width,
         highlight: stroke.highlight,
         blur: stroke.blur,
         opacity: stroke.opacity,
+        pressureSensitive: stroke.pressureSensitive,
       ),
     )
     .toList();
