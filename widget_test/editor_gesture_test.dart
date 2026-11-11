@@ -145,11 +145,12 @@ void main() {
     expect(viewer.transformationController!.value.getMaxScaleOnAxis(),
         greaterThan(1));
     expect(note.strokes, hasLength(1));
+    expect(note.pageCount, 1);
     await first.up();
     await second.up();
   });
 
-  testWidgets('scrolling near the bottom appends a marked page',
+  testWidgets('only downward scrolling appends one vertically marked page',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -163,16 +164,42 @@ void main() {
 
     final canvas = find.byType(InteractiveViewer);
     final position = tester.getCenter(canvas);
+    expect(find.text('1/1'), findsOneWidget);
     await tester.sendEventToBinding(
       PointerScrollEvent(
         position: position,
-        scrollDelta: const Offset(0, 700),
+        scrollDelta: const Offset(700, 0),
+      ),
+    );
+    await tester.pump();
+    expect(note.pageCount, 1);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: position,
+        scrollDelta: const Offset(0, -700),
+      ),
+    );
+    await tester.pump();
+    expect(note.pageCount, 1);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: position,
+        scrollDelta: const Offset(0, 5000),
       ),
     );
     await tester.pump();
 
     expect(note.pageCount, 2);
     expect(find.text('1/2'), findsOneWidget);
+    expect(find.text('2/2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('page-divider-1')), findsOneWidget);
+    final firstNumber = tester.widget<Positioned>(
+      find.byKey(const ValueKey('page-number-1')),
+    );
+    final secondNumber = tester.widget<Positioned>(
+      find.byKey(const ValueKey('page-number-2')),
+    );
+    expect(secondNumber.top, greaterThan(firstNumber.top!));
   });
 
   testWidgets('eraser removes drawings without touching typed text',

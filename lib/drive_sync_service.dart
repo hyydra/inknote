@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,22 @@ import 'note_store.dart';
 
 const _appFolderName = 'Pennino';
 const _notesFolderName = 'notes';
+
+List<Note> _decodeRemoteNotes(List<String> payloads) {
+  final notes = <Note>[];
+  for (final content in payloads) {
+    try {
+      notes.add(
+        Note.fromJson(
+          Map<String, dynamic>.from(jsonDecode(content) as Map),
+        ),
+      );
+    } catch (_) {
+      // Unrelated or damaged JSON files are left untouched for recovery.
+    }
+  }
+  return notes;
+}
 
 class DriveSyncResult {
   final int noteCount;
@@ -248,18 +265,14 @@ class DriveSyncService {
 
     final remoteRaw = await selectedBackend.readFiles();
     final merged = {for (final item in await store.load()) item.id: item};
-    for (final content in remoteRaw.values) {
-      try {
-        final remote = Note.fromJson(
-          Map<String, dynamic>.from(jsonDecode(content) as Map),
-        );
-        final local = merged[remote.id];
-        if (local == null || remote.updated.isAfter(local.updated)) {
-          merged[remote.id] = remote;
-          await store.save(remote);
-        }
-      } catch (_) {
-        // Unrelated or damaged JSON files are left untouched for recovery.
+    final remoteNotes = await Isolate.run(
+      () => _decodeRemoteNotes(remoteRaw.values.toList(growable: false)),
+    );
+    for (final remote in remoteNotes) {
+      final local = merged[remote.id];
+      if (local == null || remote.updated.isAfter(local.updated)) {
+        merged[remote.id] = remote;
+        await store.save(remote);
       }
     }
 

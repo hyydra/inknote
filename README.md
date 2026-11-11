@@ -22,7 +22,7 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 ## Highlights
 - Multiple local notes with typed text, checklists and editable drawing strokes. Drawing tools include pencil, pen, a yellow-default highlighter, a pixel-blur brush that affects earlier content while keeping the paper and later strokes sharp, whole-stroke eraser and undo/redo.
 - A large canvas with direct two-finger pan and zoom, plus stroke selection, movement and deletion at any zoom level. No separate Hand mode is required.
-- Scrolling beyond the bottom automatically appends another continuous page, with a visible divider and page counter; the page count is saved with the note.
+- Scrolling downward to the bottom appends exactly one continuous page; zooming, horizontal scrolling and upward scrolling never create pages. Dividers and per-page counters continue vertically down the canvas, and the page count is saved with the note.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
 - On Android, the cloud-sync button selects a writable Google Drive location through the system folder picker. On Windows, it selects a Google Drive for Desktop root. Pennino then uses the same visible `Pennino/notes` folder on every device, imports legacy JSON files from the previously selected root, and automatically performs a two-way sync at startup and after each save. Matching note IDs are resolved by their latest update timestamp without requiring a Google Cloud API key.
@@ -53,7 +53,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.10` builds and publishes three assets:
+Pushing a version tag such as `v0.4.11` builds and publishes three assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.

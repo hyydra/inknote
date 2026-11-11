@@ -11,10 +11,12 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private var folderResult: MethodChannel.Result? = null
     private val folderRequestCode = 7401
+    private val syncExecutor = Executors.newSingleThreadExecutor()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -44,11 +46,13 @@ class MainActivity : FlutterActivity() {
                     when (call.method) {
                         "hasFolder" -> result.success(hasFolderAccess())
                         "chooseFolder" -> chooseFolder(result)
-                        "readFolder" -> result.success(readFolder())
+                        "readFolder" -> runSyncOperation(result) { readFolder() }
                         "writeFolder" -> {
                             val files = call.argument<Map<String, String>>("files") ?: emptyMap()
-                            writeFolder(files)
-                            result.success(null)
+                            runSyncOperation(result) {
+                                writeFolder(files)
+                                null
+                            }
                         }
                         else -> result.notImplemented()
                     }
@@ -79,6 +83,27 @@ class MainActivity : FlutterActivity() {
                     result.error("update_install", error.message, null)
                 }
             }
+    }
+
+    private fun <T> runSyncOperation(
+        result: MethodChannel.Result,
+        operation: () -> T
+    ) {
+        syncExecutor.execute {
+            try {
+                val value = operation()
+                runOnUiThread { result.success(value) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("drive_sync", error.message, null)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        syncExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun folderUri(): Uri? =

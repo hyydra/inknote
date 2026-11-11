@@ -726,7 +726,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       next[12] = currentCenter.dx - sceneX * nextScale;
       next[13] = currentCenter.dy - sceneY * nextScale;
       transformationController.value = next;
-      _refreshCanvasViewport();
+      _refreshCanvasViewport(
+        userScrolledDown: currentCenter.dy < previousCenter.dy - 0.5,
+      );
       return;
     }
     if (drawingPointer == event.pointer) move(event);
@@ -746,16 +748,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     next[12] -= event.scrollDelta.dx;
     next[13] -= event.scrollDelta.dy;
     transformationController.value = next;
-    _refreshCanvasViewport();
+    _refreshCanvasViewport(userScrolledDown: event.scrollDelta.dy > 0);
   }
 
-  void _refreshCanvasViewport() {
+  void _refreshCanvasViewport({required bool userScrolledDown}) {
     var appendedPage = false;
     final transform = canvasTransform;
-    if (canvasViewportHeight > 0 && canvasPageHeight > 0) {
+    if (userScrolledDown && canvasViewportHeight > 0 && canvasPageHeight > 0) {
       final visibleBottom =
           (canvasViewportHeight - transform.translationY) / transform.scale;
-      while (visibleBottom >= widget.note.pageCount * canvasPageHeight - 180) {
+      if (visibleBottom >= widget.note.pageCount * canvasPageHeight - 180) {
         widget.note.pageCount += 1;
         appendedPage = true;
       }
@@ -2067,14 +2069,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ),
-                                if (widget.note.pageCount > 1)
-                                  for (var page = 1;
-                                      page < widget.note.pageCount;
-                                      page++) ...[
+                                for (var page = 0;
+                                    page < widget.note.pageCount;
+                                    page++) ...[
+                                  if (page < widget.note.pageCount - 1)
                                     Positioned(
+                                      key: ValueKey('page-divider-${page + 1}'),
                                       left: 0,
                                       right: 0,
-                                      top: canvasPageHeight * page - 7,
+                                      top: canvasPageHeight * (page + 1) - 7,
                                       height: 14,
                                       child: const IgnorePointer(
                                         child: ColoredBox(
@@ -2082,39 +2085,40 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     ),
-                                    Positioned(
-                                      right: 18,
-                                      top: canvasPageHeight * page - 34,
-                                      child: IgnorePointer(
-                                        child: DecoratedBox(
-                                          decoration: BoxDecoration(
-                                            color: PenninoColors.leatherInset,
-                                            borderRadius: BorderRadius.all(
-                                              Radius.circular(5),
-                                            ),
-                                            border: Border.fromBorderSide(
-                                              BorderSide(
-                                                color: PenninoColors.gold,
-                                              ),
+                                  Positioned(
+                                    key: ValueKey('page-number-${page + 1}'),
+                                    right: 18,
+                                    top: canvasPageHeight * (page + 1) - 34,
+                                    child: IgnorePointer(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: PenninoColors.leatherInset,
+                                          borderRadius: BorderRadius.all(
+                                            Radius.circular(5),
+                                          ),
+                                          border: Border.fromBorderSide(
+                                            BorderSide(
+                                              color: PenninoColors.gold,
                                             ),
                                           ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 3,
-                                            ),
-                                            child: Text(
-                                              '$page/${widget.note.pageCount}',
-                                              style: const TextStyle(
-                                                color: PenninoColors.paleGold,
-                                                fontSize: 12,
-                                              ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 3,
+                                          ),
+                                          child: Text(
+                                            '${page + 1}/${widget.note.pageCount}',
+                                            style: const TextStyle(
+                                              color: PenninoColors.paleGold,
+                                              fontSize: 12,
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ],
+                                  ),
+                                ],
                                 if (showText)
                                   for (var index = 0;
                                       index < textControllers.length;
