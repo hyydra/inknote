@@ -2,7 +2,7 @@
 
 - Goal: Replace persisted vector strokes with per-page raster drawings, remove drawing undo/redo, and keep text above drawing layers.
 - Owner: Copilot.
-- State: Verified; commit/push in progress, not released.
+- State: Committed as `de3c205`; push in progress, not released.
 
 ## Log
 
@@ -14,10 +14,11 @@
 - An initial bounded erase layer cropped pixels outside its brush bounds; the raster tests caught it. The corrected `BlendMode.src` composite preserves untouched pixels. An indeterminate progress bar also prevented `pumpAndSettle`; replaced it with a static accessible status strip.
 - `flutter analyze` and the full `flutter test` suite pass. `flutter build windows --release` and `flutter build apk --debug` both pass.
 - The user has now requested commit and push. Push only the feature branch; no version bump or release tag is in scope. Unrelated untracked `.codex/`, `reports/`, and `research_notes/` remain untouched.
+- Committed the verified migration as `de3c205` (`feat: rasterize canvas drawings`); pushing this branch is the remaining step.
 
 ## Running now
 
-- Commit the verified raster migration and push `codex/persistent-toolbar-text-first`.
+- Push `codex/persistent-toolbar-text-first`; then verify the remote head matches the local commit.
 
 ## Next
 
@@ -25,6 +26,6 @@
 
 ## Don't repeat
 
-- Do not publish or push this migration without a release request.
+- Do not create a release tag unless the user separately requests a release.
 - Do not modify the unrelated untracked folders.
 - Do not reintroduce per-stroke legacy conversion; batch ordinary strokes per page and preserve blur ordering.
