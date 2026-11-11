@@ -11,6 +11,7 @@
 - Replaced the eraser outline with a two-tone rubber icon; the Add text button now uses the T mark.
 - Stacked the text toolbar above drawing tools and framed toolbar icons. Added per-tool width controls for pencil, pen, highlighter, blur, and eraser.
 - `flutter analyze` and the full `flutter test` suite pass.
+- Implementation commit: `c179e25` (`lib/main.dart`, `lib/raster_drawing.dart`, `lib/text_block_controller.dart`, `test/raster_drawing_test.dart`, `widget_test/editor_gesture_test.dart`).
 
 ## Running now
 
