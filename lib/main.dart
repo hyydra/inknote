@@ -234,6 +234,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool showText = true;
   bool showTasks = false;
   bool applyingExternalChange = false;
+  bool saveFailed = false;
   final Set<int> selectedStrokes = {};
   Offset? lastSelectionViewportPoint;
   bool selectionMoved = false;
@@ -275,8 +276,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
     autosave = AutosaveController(
       onSave: _persist,
-      onStatusChanged: (_) {
-        if (mounted) setState(() {});
+      onStatusChanged: (status) {
+        final failed = status == SaveStatus.failed;
+        if (mounted && failed != saveFailed) {
+          setState(() => saveFailed = failed);
+        }
       },
     );
     titleController = TextEditingController(text: widget.note.title);
@@ -841,19 +845,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String get saveLabel => switch (autosave.status) {
-        SaveStatus.saved => 'Saved',
-        SaveStatus.unsaved => 'Unsaved',
-        SaveStatus.saving => 'Saving…',
-        SaveStatus.failed => 'Save failed',
-      };
+  String get saveLabel => saveFailed ? 'Save failed' : 'Autosave on';
 
-  IconData get saveIcon => switch (autosave.status) {
-        SaveStatus.saved => Icons.check_circle_outline,
-        SaveStatus.unsaved => Icons.edit_outlined,
-        SaveStatus.saving => Icons.sync,
-        SaveStatus.failed => Icons.error_outline,
-      };
+  IconData get saveIcon =>
+      saveFailed ? Icons.error_outline : Icons.check_circle_outline;
 
   Future<Uint8List> renderPreview() async {
     final recorder = ui.PictureRecorder();
@@ -1513,7 +1508,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _blurStrokeLayer(Stroke stroke, {Key? key}) {
+  Widget _blurStrokeLayer(
+    Stroke stroke, {
+    required List<Stroke> priorStrokes,
+    required int layerIndex,
+    Key? key,
+  }) {
     const passes = <(double, double, double)>[
       (2.20, 2.5, 0.06),
       (1.85, 4, 0.09),
@@ -1570,6 +1570,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   textIndex < textControllers.length;
                                   textIndex++)
                                 _canvasTextBlockPreview(textIndex),
+                            CustomPaint(
+                              key: ValueKey(
+                                'blur-strokes-$layerIndex-$index',
+                              ),
+                              painter: StrokePainter(
+                                priorStrokes,
+                                null,
+                                paintBackground: false,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -2001,17 +2011,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   if (widget.note.strokes[index].blur)
                                     _blurStrokeLayer(
                                       widget.note.strokes[index],
+                                      priorStrokes: widget.note.strokes
+                                          .take(index)
+                                          .where((stroke) => !stroke.blur)
+                                          .toList(),
+                                      layerIndex: index,
                                       key: ValueKey('blur-layer-$index'),
-                                    ),
-                                if (active != null && active!.blur)
-                                  _blurStrokeLayer(
-                                    active!,
-                                    key: const Key('active-blur-layer'),
-                                  ),
-                                for (var index = 0;
-                                    index < widget.note.strokes.length;
-                                    index++)
-                                  if (!widget.note.strokes[index].blur)
+                                    )
+                                  else
                                     Positioned.fill(
                                       key: ValueKey('stroke-layer-$index'),
                                       child: IgnorePointer(
@@ -2024,6 +2031,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     ),
+                                if (active != null && active!.blur)
+                                  _blurStrokeLayer(
+                                    active!,
+                                    priorStrokes: widget.note.strokes
+                                        .where((stroke) => !stroke.blur)
+                                        .toList(),
+                                    layerIndex: widget.note.strokes.length,
+                                    key: const Key('active-blur-layer'),
+                                  ),
                                 if (active != null && !active!.blur)
                                   Positioned.fill(
                                     key: const Key('active-stroke-layer'),

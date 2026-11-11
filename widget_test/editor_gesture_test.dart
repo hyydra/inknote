@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:notes_app/canvas_painter.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
 import 'package:notes_app/rich_text_controller.dart';
@@ -353,7 +354,8 @@ void main() {
     );
   });
 
-  testWidgets('every drawing layer stays above blur layers', (tester) async {
+  testWidgets('blur affects earlier strokes while later strokes stay sharp',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = Note(
@@ -402,14 +404,46 @@ void main() {
         layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
     expect(
       layerIndex(const ValueKey('blur-layer-1')),
-      lessThan(layerIndex(const ValueKey('stroke-layer-0'))),
+      greaterThan(layerIndex(const ValueKey('stroke-layer-0'))),
     );
     expect(
       layerIndex(const ValueKey('blur-layer-1')),
       lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
     );
+    final blurredContent = tester.widget<CustomPaint>(
+      find.byKey(const ValueKey('blur-strokes-1-7')),
+    );
+    final painter = blurredContent.painter! as StrokePainter;
+    expect(painter.strokes, [same(note.strokes[0])]);
     expect(find.byType(BackdropFilter), findsNothing);
     expect(find.byType(ImageFiltered), findsNWidgets(8));
+  });
+
+  testWidgets('normal autosave cycles do not flicker the toolbar status',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'stable-save-status',
+      title: 'Stable save status',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    expect(find.text('Autosave on'), findsOneWidget);
+    await tester.dragFrom(const Offset(300, 300), const Offset(80, 40));
+    await tester.pump();
+    expect(find.text('Autosave on'), findsOneWidget);
+    expect(find.text('Unsaved'), findsNothing);
+    expect(find.text('Saving…'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Autosave on'), findsOneWidget);
   });
 
   testWidgets('bold applies to selected text instead of the whole block',
