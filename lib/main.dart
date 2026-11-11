@@ -7,31 +7,22 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_selector/file_selector.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import 'autosave_controller.dart';
 import 'app_version.dart';
 import 'canvas_editing.dart';
 import 'canvas_painter.dart';
+import 'drive_sync_service.dart';
 import 'note_data.dart';
+import 'note_storage.dart';
 import 'note_store.dart';
+import 'pennino_theme.dart';
 import 'rich_text_controller.dart';
 import 'text_block_controller.dart';
 import 'update_service.dart';
 
 export 'app_version.dart' show appVersion;
-
-abstract final class PenninoColors {
-  static const leather = Color(0xff15191d);
-  static const leatherRaised = Color(0xff20262b);
-  static const leatherInset = Color(0xff0d1013);
-  static const gold = Color(0xffd7a842);
-  static const paleGold = Color(0xfff0d38a);
-  static const steel = Color(0xffaeb5bc);
-  static const ink = Color(0xfff5f0e5);
-}
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,101 +35,10 @@ class NotesApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Pennino',
-        theme: ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.dark,
-          colorScheme: const ColorScheme.dark(
-            primary: PenninoColors.gold,
-            onPrimary: PenninoColors.leatherInset,
-            primaryContainer: Color(0xff5b461c),
-            onPrimaryContainer: PenninoColors.paleGold,
-            secondary: PenninoColors.steel,
-            onSecondary: PenninoColors.leatherInset,
-            surface: PenninoColors.leather,
-            onSurface: PenninoColors.ink,
-            surfaceContainerLowest: PenninoColors.leatherInset,
-            surfaceContainerLow: Color(0xff191e22),
-            surfaceContainer: PenninoColors.leatherRaised,
-            surfaceContainerHigh: Color(0xff2a3035),
-            outline: Color(0xff6d675d),
-            outlineVariant: Color(0xff3f4346),
-          ),
-          scaffoldBackgroundColor: PenninoColors.leather,
-          dividerColor: const Color(0xff4a443b),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: PenninoColors.leatherRaised,
-            foregroundColor: PenninoColors.paleGold,
-            surfaceTintColor: Colors.transparent,
-            shadowColor: Colors.black,
-            elevation: 5,
-            titleTextStyle: TextStyle(
-              color: PenninoColors.ink,
-              fontSize: 21,
-              fontWeight: FontWeight.w600,
-              letterSpacing: .2,
-            ),
-          ),
-          cardTheme: CardThemeData(
-            color: PenninoColors.leatherRaised,
-            surfaceTintColor: Colors.transparent,
-            elevation: 3,
-            shadowColor: Colors.black,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-              side: const BorderSide(color: Color(0xff4b4740)),
-            ),
-          ),
-          chipTheme: ChipThemeData(
-            backgroundColor: PenninoColors.leatherRaised,
-            selectedColor: const Color(0xff5b461c),
-            checkmarkColor: PenninoColors.paleGold,
-            side: const BorderSide(color: Color(0xff575149)),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
-            ),
-            labelStyle: const TextStyle(color: PenninoColors.ink),
-          ),
-          floatingActionButtonTheme: const FloatingActionButtonThemeData(
-            backgroundColor: PenninoColors.gold,
-            foregroundColor: PenninoColors.leatherInset,
-            elevation: 6,
-          ),
-          popupMenuTheme: PopupMenuThemeData(
-            color: PenninoColors.leatherRaised,
-            surfaceTintColor: Colors.transparent,
-            elevation: 8,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-              side: const BorderSide(color: Color(0xff5a544b)),
-            ),
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: PenninoColors.leatherInset,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: Color(0xff5a544b)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(
-                color: PenninoColors.gold,
-                width: 1.4,
-              ),
-            ),
-          ),
-          textButtonTheme: TextButtonThemeData(
-            style: TextButton.styleFrom(
-              foregroundColor: PenninoColors.paleGold,
-            ),
-          ),
-        ),
+        theme: buildPenninoTheme(),
         home: const LauncherCanvasPage(),
       );
 }
-
-Future<Directory> _noteDirectory() async =>
-    Directory('${(await getApplicationDocumentsDirectory()).path}/notes');
 
 class LauncherCanvasPage extends StatefulWidget {
   const LauncherCanvasPage({super.key});
@@ -149,12 +49,19 @@ class LauncherCanvasPage extends StatefulWidget {
 
 class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   static const launcherNoteId = 'launcher-canvas';
-  final store = NoteStore(directoryProvider: _noteDirectory);
+  final store = NoteStore(directoryProvider: noteDirectory);
+  late final DriveSyncService syncService;
   Note? note;
 
   @override
   void initState() {
     super.initState();
+    syncService = DriveSyncService(
+      store: store,
+      backend: createPlatformSyncBackend(
+        localNoteDirectory: noteDirectory,
+      ),
+    );
     _load();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(UpdateService.prompt(context, automatic: true));
@@ -162,6 +69,11 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   }
 
   Future<void> _load() async {
+    try {
+      await syncService.sync();
+    } catch (_) {
+      // Local notes remain available when Drive is offline.
+    }
     final notes = await store.load();
     final existing = notes.where((item) => item.id == launcherNoteId);
     final loaded = existing.isEmpty
@@ -193,16 +105,28 @@ class LibraryPage extends StatefulWidget {
 }
 
 class _LibraryPageState extends State<LibraryPage> {
-  final store = NoteStore(directoryProvider: _noteDirectory);
+  final store = NoteStore(directoryProvider: noteDirectory);
+  late final DriveSyncService syncService;
   List<Note> notes = [];
   bool loading = true;
   @override
   void initState() {
     super.initState();
+    syncService = DriveSyncService(
+      store: store,
+      backend: createPlatformSyncBackend(
+        localNoteDirectory: noteDirectory,
+      ),
+    );
     refresh();
   }
 
   Future<void> refresh() async {
+    try {
+      await syncService.sync();
+    } catch (_) {
+      // Showing local notes is more important than blocking on Drive.
+    }
     final loaded = await store.load();
     if (mounted)
       setState(() {
@@ -303,7 +227,6 @@ class EditorPage extends StatefulWidget {
 
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('notes/widget');
-  static const syncChannel = MethodChannel('notes/sync');
   late final TextEditingController titleController;
   late final TextBlockController textBlockController;
   late final TextEditingController taskController;
@@ -327,7 +250,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   double canvasPageHeight = 1200;
   late final AutosaveController autosave;
   late final CanvasEditorController canvasEditor;
-  final store = NoteStore(directoryProvider: _noteDirectory);
+  final store = NoteStore(directoryProvider: noteDirectory);
+  late final DriveSyncService syncService;
 
   List<RichTextEditingController> get textControllers =>
       textBlockController.controllers;
@@ -341,6 +265,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     canvasEditor = CanvasEditorController(widget.note);
+    syncService = DriveSyncService(
+      store: store,
+      backend: createPlatformSyncBackend(
+        localNoteDirectory: noteDirectory,
+      ),
+    );
     textBlockController = TextBlockController(
       onChanged: _markChanged,
       onFocusChanged: () {
@@ -882,6 +812,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         .toList();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
+    try {
+      await syncService.sync(currentNoteId: widget.note.id);
+    } catch (_) {
+      // The local atomic save is successful even when Drive is unavailable.
+    }
   }
 
   Future<void> save({bool showMessage = true}) async {
@@ -1073,45 +1008,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     _markChanged();
   }
 
-  Future<Directory?> _windowsSyncFolder({bool choose = false}) async {
-    final marker = File('${(await _noteDirectory()).path}/.sync-folder');
-    if (!choose && await marker.exists()) {
-      final savedPath = (await marker.readAsString()).trim();
-      if (savedPath.isNotEmpty) {
-        final saved = Directory(savedPath);
-        if (await saved.exists()) return saved;
-      }
-    }
-    final selected = await getDirectoryPath(
-      confirmButtonText: 'Use this folder',
-    );
-    if (selected == null) return null;
-    final directory = Directory(selected);
-    await marker.writeAsString(directory.path, flush: true);
-    return directory;
-  }
-
-  Future<Map<String, String>> _readWindowsSyncFolder(
-      Directory directory) async {
-    final files = <String, String>{};
-    await for (final entry in directory.list()) {
-      if (entry is File && entry.path.toLowerCase().endsWith('.json')) {
-        files[entry.uri.pathSegments.last] = await entry.readAsString();
-      }
-    }
-    return files;
-  }
-
-  Future<void> _writeWindowsSyncFolder(
-    Directory directory,
-    Map<String, String> files,
-  ) async {
-    for (final entry in files.entries) {
-      await File('${directory.path}${Platform.pathSeparator}${entry.key}')
-          .writeAsString(entry.value, flush: true);
-    }
-  }
-
   Future<void> syncDrive({bool chooseFolder = false}) async {
     if (!Platform.isAndroid && !Platform.isWindows) {
       if (mounted) {
@@ -1135,43 +1031,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     try {
-      Directory? windowsFolder;
-      Map<String, String> remoteRaw;
-      if (Platform.isAndroid) {
-        var hasFolder = false;
-        if (!chooseFolder) {
-          hasFolder =
-              await syncChannel.invokeMethod<bool>('hasFolder') ?? false;
-        }
-        if (!hasFolder) {
-          hasFolder =
-              await syncChannel.invokeMethod<bool>('chooseFolder') ?? false;
-        }
-        if (!hasFolder) return;
-        remoteRaw =
-            await syncChannel.invokeMapMethod<String, String>('readFolder') ??
-                <String, String>{};
-      } else {
-        windowsFolder = await _windowsSyncFolder(choose: chooseFolder);
-        if (windowsFolder == null) return;
-        remoteRaw = await _readWindowsSyncFolder(windowsFolder);
+      var result = await syncService.sync(
+        chooseFolder: chooseFolder,
+        currentNoteId: widget.note.id,
+      );
+      if (result == null && !chooseFolder) {
+        result = await syncService.sync(
+          chooseFolder: true,
+          currentNoteId: widget.note.id,
+        );
       }
-      final merged = {for (final item in await store.load()) item.id: item};
-      for (final content in remoteRaw.values) {
-        try {
-          final remote = Note.fromJson(
-            Map<String, dynamic>.from(jsonDecode(content) as Map),
-          );
-          final local = merged[remote.id];
-          if (local == null || remote.updated.isAfter(local.updated)) {
-            merged[remote.id] = remote;
-            await store.save(remote);
-          }
-        } catch (_) {
-          // Ignore unrelated or damaged JSON files in the selected folder.
-        }
-      }
-      final syncedCurrent = merged[widget.note.id];
+      if (result == null) return;
+      final syncedCurrent = result.currentNote;
       if (syncedCurrent != null && !identical(syncedCurrent, widget.note)) {
         applyingExternalChange = true;
         try {
@@ -1219,19 +1090,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           applyingExternalChange = false;
         }
       }
-      final files = <String, String>{
-        for (final item in merged.values)
-          '${item.id}.json': jsonEncode(item.toJson()),
-      };
-      if (Platform.isAndroid) {
-        await syncChannel.invokeMethod<void>('writeFolder', {'files': files});
-      } else {
-        await _writeWindowsSyncFolder(windowsFolder!, files);
-      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Synced ${files.length} notes with Google Drive'),
+            content: Text(
+              'Synced ${result.noteCount} notes with Google Drive',
+            ),
           ),
         );
       }

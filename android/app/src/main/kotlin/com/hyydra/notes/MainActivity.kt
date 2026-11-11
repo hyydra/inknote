@@ -139,47 +139,105 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun folderEntries(): Map<String, Uri> {
+    private fun rootDocument(): Uri {
         val tree = folderUri() ?: error("Choose a Google Drive folder first")
         if (!hasFolderAccess()) {
             error("Drive folder access expired. Choose the folder again.")
         }
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(
+        return DocumentsContract.buildDocumentUriUsingTree(
             tree, DocumentsContract.getTreeDocumentId(tree)
         )
-        val entries = mutableMapOf<String, Uri>()
+    }
+
+    private data class DocumentEntry(val uri: Uri, val mimeType: String)
+
+    private fun folderEntries(parent: Uri): Map<String, DocumentEntry> {
+        val tree = folderUri() ?: error("Choose a Google Drive folder first")
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(
+            tree, DocumentsContract.getDocumentId(parent)
+        )
+        val entries = mutableMapOf<String, DocumentEntry>()
         contentResolver.query(
             children,
             arrayOf(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
             ),
             null, null, null
         )?.use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
                 val name = cursor.getString(1)
-                entries[name] = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                val mimeType = cursor.getString(2)
+                entries[name] = DocumentEntry(
+                    DocumentsContract.buildDocumentUriUsingTree(tree, id),
+                    mimeType
+                )
             }
         }
         return entries
     }
 
-    private fun readFolder(): Map<String, String> = folderEntries()
-        .filterKeys { it.endsWith(".json", ignoreCase = true) }
-        .mapValues { (_, uri) ->
-            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                ?: error("Could not read $uri")
+    private fun displayName(document: Uri): String? = contentResolver.query(
+        document,
+        arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+        null, null, null
+    )?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    }
+
+    private fun ensureDirectory(parent: Uri, name: String): Uri {
+        val existing = folderEntries(parent)[name]
+        if (existing != null) {
+            if (existing.mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
+                error("$name exists in the Drive folder but is not a folder")
+            }
+            return existing.uri
         }
+        return DocumentsContract.createDocument(
+            contentResolver,
+            parent,
+            DocumentsContract.Document.MIME_TYPE_DIR,
+            name
+        ) ?: error("Could not create the $name Drive folder")
+    }
+
+    private fun syncFolder(): Uri {
+        val root = rootDocument()
+        return when (displayName(root)?.lowercase()) {
+            "notes" -> root
+            "pennino" -> ensureDirectory(root, "notes")
+            else -> ensureDirectory(ensureDirectory(root, "Pennino"), "notes")
+        }
+    }
+
+    private fun readJsonFiles(folder: Uri): Map<String, String> =
+        folderEntries(folder)
+            .filterKeys { it.endsWith(".json", ignoreCase = true) }
+            .mapValues { (_, entry) ->
+                contentResolver.openInputStream(entry.uri)?.bufferedReader()
+                    ?.use { it.readText() }
+                    ?: error("Could not read ${entry.uri}")
+            }
+
+    private fun readFolder(): Map<String, String> {
+        val root = rootDocument()
+        val canonical = syncFolder()
+        val files = readJsonFiles(root).toMutableMap()
+        files.putAll(readJsonFiles(canonical))
+        return files
+    }
 
     private fun writeFolder(files: Map<String, String>) {
-        val tree = folderUri() ?: error("Choose a Google Drive folder first")
-        val parent = DocumentsContract.buildDocumentUriUsingTree(
-            tree, DocumentsContract.getTreeDocumentId(tree)
-        )
-        val existing = folderEntries()
+        val parent = syncFolder()
+        val existing = folderEntries(parent)
         files.forEach { (name, content) ->
-            val uri = existing[name] ?: DocumentsContract.createDocument(
+            val entry = existing[name]
+            if (entry != null && entry.mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                error("$name exists in Drive but is a folder")
+            }
+            val uri = entry?.uri ?: DocumentsContract.createDocument(
                 contentResolver, parent, "application/json", name
             ) ?: error("Could not create $name")
             writeText(uri, content, name)
