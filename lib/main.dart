@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-import 'autosave_controller.dart';
 import 'app_version.dart';
 import 'canvas_editing.dart';
 import 'canvas_painter.dart';
@@ -18,6 +17,7 @@ import 'note_data.dart';
 import 'note_storage.dart';
 import 'note_store.dart';
 import 'pennino_theme.dart';
+import 'raster_drawing.dart';
 import 'rich_text_controller.dart';
 import 'text_block_controller.dart';
 import 'update_service.dart';
@@ -62,17 +62,14 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   }
 
   Future<void> _load() async {
-    final notes = await store.load();
-    final existing = notes.where((item) => item.id == launcherNoteId);
-    final loaded = existing.isEmpty
-        ? Note(
-            id: launcherNoteId,
-            title: 'Launcher note',
-            text: '',
-            updated: DateTime.now(),
-            strokes: [],
-          )
-        : existing.first;
+    final loaded = await store.loadNote(launcherNoteId) ??
+        Note(
+          id: launcherNoteId,
+          title: 'Launcher note',
+          text: '',
+          updated: DateTime.now(),
+          strokes: [],
+        );
     if (mounted) {
       setState(() => note = loaded);
     }
@@ -210,6 +207,181 @@ enum DrawTool {
   blur,
 }
 
+class _DrawingToolIcon extends StatelessWidget {
+  final DrawTool tool;
+  final double size;
+
+  const _DrawingToolIcon(this.tool, {this.size = 24});
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
+    if (tool == DrawTool.text) {
+      return CustomPaint(
+        key: const ValueKey('drawing-tool-icon-text'),
+        size: Size.square(size),
+        painter: _TextToolIconPainter(color),
+      );
+    }
+    if (tool == DrawTool.eraser) {
+      return CustomPaint(
+        key: const ValueKey('drawing-tool-icon-eraser'),
+        size: Size.square(size),
+        painter: _EraserToolIconPainter(
+          color,
+          Theme.of(context).colorScheme.primary,
+        ),
+      );
+    }
+    return Icon(_toolIconData(tool), size: size);
+  }
+
+  IconData _toolIconData(DrawTool tool) => switch (tool) {
+        DrawTool.hand => Icons.pan_tool_outlined,
+        DrawTool.text => Icons.title,
+        DrawTool.pencil => Icons.create_outlined,
+        DrawTool.pen => Icons.edit,
+        DrawTool.highlighter => Icons.border_color,
+        DrawTool.eraser => Icons.backspace_outlined,
+        DrawTool.blur => Icons.blur_on,
+      };
+}
+
+class _TextToolIconPainter extends CustomPainter {
+  final Color color;
+
+  const _TextToolIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = size.shortestSide * 0.11
+      ..strokeCap = StrokeCap.square;
+    canvas.drawLine(
+      Offset(size.width * 0.2, size.height * 0.26),
+      Offset(size.width * 0.8, size.height * 0.26),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.26),
+      Offset(size.width * 0.5, size.height * 0.78),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TextToolIconPainter oldDelegate) =>
+      color != oldDelegate.color;
+}
+
+class _FontSizeMarkIcon extends StatelessWidget {
+  const _FontSizeMarkIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
+    return CustomPaint(
+      key: key,
+      size: const Size.square(24),
+      painter: _FontSizeMarkIconPainter(color),
+    );
+  }
+}
+
+class _FontSizeMarkIconPainter extends CustomPainter {
+  final Color color;
+
+  const _FontSizeMarkIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = size.shortestSide * 0.1
+      ..strokeCap = StrokeCap.square;
+    canvas.drawLine(
+      Offset(size.width * 0.05, size.height * 0.25),
+      Offset(size.width * 0.45, size.height * 0.25),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.25, size.height * 0.25),
+      Offset(size.width * 0.25, size.height * 0.78),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.68, size.height * 0.36),
+      Offset(size.width * 0.68, size.height * 0.78),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.54, size.height * 0.50),
+      Offset(size.width * 0.85, size.height * 0.50),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _FontSizeMarkIconPainter oldDelegate) =>
+      color != oldDelegate.color;
+}
+
+class _EraserToolIconPainter extends CustomPainter {
+  final Color color;
+  final Color accentColor;
+
+  const _EraserToolIconPainter(this.color, this.accentColor);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final body = Rect.fromCenter(
+      center: Offset.zero,
+      width: size.shortestSide * 0.76,
+      height: size.shortestSide * 0.40,
+    );
+    final rubber = RRect.fromRectAndRadius(
+      body,
+      Radius.circular(size.shortestSide * 0.055),
+    );
+    canvas
+      ..save()
+      ..translate(center.dx, center.dy)
+      ..rotate(-math.pi / 4);
+    canvas.drawRRect(
+      rubber,
+      Paint()..color = color.withValues(alpha: 0.16),
+    );
+    canvas.save();
+    canvas.clipRRect(rubber);
+    canvas.drawRect(
+      Rect.fromLTRB(body.left, body.top, 0, body.bottom),
+      Paint()..color = accentColor.withValues(alpha: 0.48),
+    );
+    canvas.restore();
+    final outline = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.shortestSide * 0.09
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+    canvas.drawRRect(rubber, outline);
+    canvas.drawLine(
+      Offset(0, body.top),
+      Offset(0, body.bottom),
+      outline,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _EraserToolIconPainter oldDelegate) =>
+      color != oldDelegate.color || accentColor != oldDelegate.accentColor;
+}
+
 class EditorPage extends StatefulWidget {
   final Note note;
   final bool launcherMode;
@@ -225,22 +397,44 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
+  final ValueNotifier<int> canvasRepaint = ValueNotifier(0);
   DrawTool tool = DrawTool.pen;
   Color strokeColor = Colors.blue.shade800;
   Color highlighterColor = Colors.yellow;
-  double width = 3;
+  final Map<DrawTool, double> toolWidths = {
+    DrawTool.pencil: 2,
+    DrawTool.pen: 3,
+    DrawTool.highlighter: 22,
+    DrawTool.eraser: 36,
+    DrawTool.blur: 44,
+  };
   Stroke? active;
+  Stroke? activeEraser;
+  Stroke? activePreview;
+  final List<Stroke> activeStrokeChunks = [];
   bool showText = true;
   bool showTasks = false;
   bool applyingExternalChange = false;
+  bool hasUnsavedChanges = false;
+  bool isSaving = false;
   bool saveFailed = false;
-  bool gestureHistoryRecorded = false;
+  int _editRevision = 0;
+  Future<void>? _saveOperation;
   final Map<int, Offset> canvasPointerPositions = {};
   int? drawingPointer;
+  Offset? lastSampleViewportPosition;
   double canvasViewportHeight = 0;
   double canvasPageHeight = 1200;
-  late final AutosaveController autosave;
-  late final CanvasEditorController canvasEditor;
+  double canvasWidth = 2000;
+  late RasterDrawingStore rasterDrawing;
+  late Future<void> _rasterLoadOperation;
+  Future<void>? _rasterMigrationOperation;
+  bool rasterImagesLoaded = false;
+  bool isRasterizing = false;
+  Object? rasterImageError;
+  bool legacyRasterizationScheduled = false;
+  bool rasterMigrationOnlyDirty = false;
+  Future<void>? _strokeCommitOperation;
   final store = NoteStore(directoryProvider: noteDirectory);
   late final DriveSyncService syncService;
   late final DriveSyncDebouncer driveSyncDebouncer;
@@ -256,7 +450,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    canvasEditor = CanvasEditorController(widget.note);
+    rasterDrawing = RasterDrawingStore(
+      width: widget.note.rasterWidth,
+      pageHeight: widget.note.rasterPageHeight,
+    );
+    if (widget.note.rasterPageHeight > 0) {
+      canvasPageHeight = widget.note.rasterPageHeight.toDouble();
+    }
+    _rasterLoadOperation =
+        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
     syncService = DriveSyncService(
       store: store,
       backend: createPlatformSyncBackend(
@@ -270,22 +472,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         if (mounted) setState(() {});
       },
     );
-    autosave = AutosaveController(
-      onSave: _persist,
-      onStatusChanged: (status) {
-        final failed = status == SaveStatus.failed;
-        if (mounted && failed != saveFailed) {
-          setState(() => saveFailed = failed);
-        }
-      },
-    );
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
     taskController = TextEditingController();
-    textBlockController.replace(
-      widget.note.textBlocks,
-      formats: widget.note.textBlockFormats,
-    );
+    applyingExternalChange = true;
+    try {
+      textBlockController.replace(
+        widget.note.textBlocks,
+        formats: widget.note.textBlockFormats,
+      );
+    } finally {
+      applyingExternalChange = false;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncCurrentInBackground();
     });
@@ -295,11 +493,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     driveSyncDebouncer.dispose();
-    autosave.dispose();
     titleController.dispose();
     textBlockController.dispose();
     taskController.dispose();
+    rasterDrawing.dispose();
     transformationController.dispose();
+    canvasRepaint.dispose();
     super.dispose();
   }
 
@@ -308,28 +507,165 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _finalizeActiveStroke();
-      gestureHistoryRecorded = false;
-      unawaited(
-        autosave.saveNow().whenComplete(driveSyncDebouncer.flush),
-      );
+      unawaited(_finalizeActiveStroke());
     }
   }
 
-  void _markChanged() {
-    if (!applyingExternalChange) autosave.markChanged();
+  Future<void> _loadRasterPages(
+    RasterDrawingStore target,
+    Map<int, String> encodedPages,
+  ) async {
+    Object? error;
+    try {
+      await target.load(encodedPages);
+    } catch (loadError) {
+      error = loadError;
+    }
+    if (!mounted) {
+      target.dispose();
+      return;
+    }
+    if (!identical(target, rasterDrawing)) {
+      target.dispose();
+      return;
+    }
+    setState(() {
+      rasterImagesLoaded = true;
+      rasterImageError = error;
+    });
+    if (error != null) {
+      _showRasterError(error);
+    } else {
+      _scheduleLegacyRasterization();
+    }
   }
 
-  void addTextBlock() {
+  void _showRasterError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not prepare the drawing: $error')),
+    );
+  }
+
+  void _scheduleLegacyRasterization() {
+    if (!rasterImagesLoaded ||
+        rasterImageError != null ||
+        widget.note.strokes.isEmpty ||
+        legacyRasterizationScheduled) {
+      return;
+    }
+    legacyRasterizationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => isRasterizing = true);
+      unawaited(_rasterizeLegacyStrokes());
+    });
+  }
+
+  Future<void> _rasterizeLegacyStrokes() async {
+    try {
+      await _ensureRasterized();
+    } catch (error) {
+      _showRasterError(error);
+    } finally {
+      if (mounted) setState(() => isRasterizing = false);
+    }
+  }
+
+  Future<void> _ensureRasterized() async {
+    await _rasterLoadOperation;
+    final loadError = rasterImageError;
+    if (loadError != null) {
+      throw StateError('The stored drawing could not be loaded: $loadError');
+    }
+    if (widget.note.strokes.isEmpty) return;
+    final activeMigration = _rasterMigrationOperation;
+    if (activeMigration != null) {
+      await activeMigration;
+      return;
+    }
+    final operation = _migrateLegacyStrokes();
+    _rasterMigrationOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_rasterMigrationOperation, operation)) {
+        _rasterMigrationOperation = null;
+      }
+    }
+  }
+
+  Future<void> _migrateLegacyStrokes() async {
+    final source = rasterDrawing;
+    final legacyStrokes = List<Stroke>.of(widget.note.strokes);
+    final migrationWidth = canvasWidth.ceil();
+    final migrationPageHeight = canvasPageHeight.ceil();
+    final migrationPageCount = widget.note.pageCount;
+    final encodedPages = await source.encode();
+    final migrated = RasterDrawingStore(
+      width: source.width,
+      pageHeight: source.pageHeight,
+    );
+    try {
+      await migrated.load(encodedPages);
+      await migrated.addStrokes(
+        legacyStrokes,
+        canvasWidth: migrationWidth,
+        canvasPageHeight: migrationPageHeight,
+        pageCount: migrationPageCount,
+      );
+    } catch (_) {
+      migrated.dispose();
+      rethrow;
+    }
+    if (!mounted || !identical(source, rasterDrawing)) {
+      migrated.dispose();
+      return;
+    }
+    setState(() {
+      rasterDrawing = migrated;
+      widget.note.strokes.removeRange(0, legacyStrokes.length);
+      widget.note.rasterWidth = rasterDrawing.width;
+      widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      source.dispose();
+    });
+    _markRasterMigrationDirty();
+  }
+
+  void _markChanged() {
+    if (applyingExternalChange) return;
+    rasterMigrationOnlyDirty = false;
+    _editRevision++;
+    if (hasUnsavedChanges) return;
+    setState(() => hasUnsavedChanges = true);
+  }
+
+  void _markRasterMigrationDirty() {
+    if (isSaving || hasUnsavedChanges) return;
+    rasterMigrationOnlyDirty = true;
+    _editRevision++;
+    setState(() => hasUnsavedChanges = true);
+  }
+
+  void addTextBlock() => _createTextBlock();
+
+  void _createTextBlock({Offset? position}) {
+    var addedIndex = 0;
     setState(() {
       showText = true;
       tool = DrawTool.text;
-      textBlockController.add();
+      addedIndex = textBlockController.add(
+        x: position?.dx,
+        y: position?.dy,
+      );
+      activeTextIndex = addedIndex;
     });
     _markChanged();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || textFocusNodes.isEmpty) return;
-      textFocusNodes.last.requestFocus();
+      if (!mounted || addedIndex >= textFocusNodes.length) return;
+      textFocusNodes[addedIndex].requestFocus();
     });
   }
 
@@ -356,6 +692,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         strokeColor = color;
       }
     });
+  }
+
+  double get _activeToolWidth => toolWidths[tool] ?? 3;
+
+  void _setActiveToolWidth(double value) {
+    setState(() => toolWidths[tool] = value);
   }
 
   void _selectTool(DrawTool nextTool) {
@@ -579,32 +921,47 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void begin(PointerDownEvent event) {
-    if (tool == DrawTool.hand || tool == DrawTool.text) return;
-    final viewportPoint = event.localPosition;
-    gestureHistoryRecorded = false;
-    if (tool == DrawTool.eraser) {
-      erase(viewportPoint);
+    if (tool == DrawTool.hand ||
+        tool == DrawTool.text ||
+        isRasterizing ||
+        isSaving ||
+        active != null ||
+        activeEraser != null ||
+        !rasterImagesLoaded ||
+        rasterImageError != null) {
       return;
     }
+    final viewportPoint = event.localPosition;
+    lastSampleViewportPosition = viewportPoint;
     final scenePoint = _scenePoint(event);
-    canvasEditor.recordHistory();
-    gestureHistoryRecorded = true;
+    if (tool == DrawTool.eraser) {
+      final eraserWidth = _activeToolWidth / canvasTransform.scale;
+      setState(() {
+        active = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
+        activeEraser = Stroke(
+          points: [scenePoint],
+          color: Colors.black.toARGB32(),
+          width: eraserWidth,
+          highlight: false,
+        );
+      });
+      return;
+    }
     setState(() {
+      activeEraser = null;
       active = Stroke(
         points: [scenePoint],
         color: _activeStrokeColor.toARGB32(),
-        width: tool == DrawTool.highlighter
-            ? 22
-            : tool == DrawTool.blur
-                ? 44
-                : tool == DrawTool.pencil
-                    ? 2
-                    : width,
+        width: _activeToolWidth,
         highlight: tool == DrawTool.highlighter,
         blur: tool == DrawTool.blur,
         opacity: tool == DrawTool.pencil ? 0.58 : 1,
         pressureSensitive: tool == DrawTool.pen || tool == DrawTool.pencil,
       );
+      activePreview = active!.blur ? null : _strokePreview(active!, scenePoint);
+      activeStrokeChunks.clear();
     });
   }
 
@@ -630,7 +987,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (index == null) return false;
     setState(() {
       active = null;
-      gestureHistoryRecorded = false;
+      activeEraser = null;
       activeTextIndex = index;
       tool = DrawTool.text;
     });
@@ -644,18 +1001,65 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void move(PointerMoveEvent event) {
     if (tool == DrawTool.hand || tool == DrawTool.text) return;
-    final viewportPoint = event.localPosition;
     if (tool == DrawTool.eraser) {
-      erase(viewportPoint);
+      if (activeEraser != null) _appendStrokePoint(event);
       return;
     }
     if (active == null) return;
-    final scenePoint = _scenePoint(event);
-    setState(() => active!.points.add(scenePoint));
+    _appendStrokePoint(event);
   }
 
-  void end() {
-    _finalizeActiveStroke();
+  void _appendStrokePoint(PointerEvent event, {bool force = false}) {
+    final stroke = activeEraser ?? active;
+    if (stroke == null) return;
+    final point = _scenePoint(event);
+    final previous = stroke.points.last;
+    final previousViewport = lastSampleViewportPosition;
+    final movedEnough = previousViewport == null ||
+        (event.localPosition - previousViewport).distanceSquared >= 4;
+    final pressureChanged =
+        (point.normalizedPressure - previous.normalizedPressure).abs() >= 0.04;
+    final tiltChanged = (point.tilt - previous.tilt).abs() >= 0.05;
+    if (!force && !movedEnough && !pressureChanged && !tiltChanged) return;
+    if ((point.x - previous.x).abs() < 0.0001 &&
+        (point.y - previous.y).abs() < 0.0001 &&
+        !pressureChanged &&
+        !tiltChanged) {
+      return;
+    }
+    stroke.points.add(point);
+    if (identical(stroke, activeEraser)) {
+      lastSampleViewportPosition = event.localPosition;
+      canvasRepaint.value++;
+      return;
+    }
+    final preview = activePreview;
+    if (!stroke.blur && preview != null) {
+      preview.points.add(point);
+      if (preview.points.length >= 128) {
+        setState(() {
+          activeStrokeChunks.add(preview);
+          activePreview = _strokePreview(stroke, point);
+        });
+      }
+    }
+    lastSampleViewportPosition = event.localPosition;
+    canvasRepaint.value++;
+  }
+
+  Stroke _strokePreview(Stroke source, CanvasPoint firstPoint) => Stroke(
+        points: [firstPoint],
+        color: source.color,
+        width: source.width,
+        highlight: source.highlight,
+        blur: source.blur,
+        opacity: source.opacity,
+        pressureSensitive: source.pressureSensitive,
+      );
+
+  void end(PointerEvent event) {
+    _appendStrokePoint(event, force: true);
+    unawaited(_finalizeActiveStroke());
   }
 
   void _canvasPointerDown(PointerDownEvent event) {
@@ -670,25 +1074,31 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     drawingPointer = null;
-    if (active != null) {
+    if (active != null || activeEraser != null) {
       setState(() {
         active = null;
-        gestureHistoryRecorded = false;
+        activeEraser = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
+        lastSampleViewportPosition = null;
       });
     }
   }
 
   void _canvasPointerMove(PointerMoveEvent event) {
-    final previousPositions = Map<int, Offset>.from(canvasPointerPositions);
-    if (!canvasPointerPositions.containsKey(event.pointer)) return;
+    final previousPosition = canvasPointerPositions[event.pointer];
+    if (previousPosition == null) return;
     canvasPointerPositions[event.pointer] = event.localPosition;
     if (canvasPointerPositions.length >= 2) {
       final pointers = canvasPointerPositions.keys.take(2).toList();
       final first = pointers[0];
       final second = pointers[1];
-      final previousFirst = previousPositions[first];
-      final previousSecond = previousPositions[second];
-      if (previousFirst == null || previousSecond == null) return;
+      final previousFirst = first == event.pointer
+          ? previousPosition
+          : canvasPointerPositions[first]!;
+      final previousSecond = second == event.pointer
+          ? previousPosition
+          : canvasPointerPositions[second]!;
       final currentFirst = canvasPointerPositions[first]!;
       final currentSecond = canvasPointerPositions[second]!;
       final previousCenter = (previousFirst + previousSecond) / 2;
@@ -720,7 +1130,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _canvasPointerEnd(PointerEvent event) {
     if (drawingPointer == event.pointer && canvasPointerPositions.length == 1) {
-      end();
+      end(event);
     }
     canvasPointerPositions.remove(event.pointer);
     if (canvasPointerPositions.isEmpty) drawingPointer = null;
@@ -738,7 +1148,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _refreshCanvasViewport({required bool userScrolledDown}) {
     var appendedPage = false;
     final transform = canvasTransform;
-    if (userScrolledDown && canvasViewportHeight > 0 && canvasPageHeight > 0) {
+    if (userScrolledDown &&
+        !isRasterizing &&
+        !isSaving &&
+        canvasViewportHeight > 0 &&
+        canvasPageHeight > 0) {
       final visibleBottom =
           (canvasViewportHeight - transform.translationY) / transform.scale;
       if (visibleBottom >= widget.note.pageCount * canvasPageHeight - 180) {
@@ -746,38 +1160,75 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         appendedPage = true;
       }
     }
-    setState(() {});
-    if (appendedPage) _markChanged();
-  }
-
-  void _finalizeActiveStroke() {
-    if (!commitActiveStroke(widget.note.strokes, active)) return;
-    setState(() {
-      active = null;
-      gestureHistoryRecorded = false;
-    });
-    _markChanged();
-  }
-
-  void erase(Offset viewportPoint) {
-    final index = canvasEditor.hitTest(
-      CanvasPoint(viewportPoint.dx, viewportPoint.dy),
-      canvasTransform,
-      screenTolerance: 18,
-    );
-    if (index == null) return;
-    if (!gestureHistoryRecorded) {
-      canvasEditor.recordHistory();
-      gestureHistoryRecorded = true;
+    if (appendedPage) {
+      setState(() {});
+      _markChanged();
     }
-    setState(() => canvasEditor.eraseAt(
-          CanvasPoint(viewportPoint.dx, viewportPoint.dy),
-          canvasTransform,
-        ));
-    _markChanged();
+  }
+
+  Future<void> _finalizeActiveStroke() {
+    final activeCommit = _strokeCommitOperation;
+    if (activeCommit != null) return activeCommit;
+    final operation = _commitActiveStroke();
+    _strokeCommitOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_strokeCommitOperation, operation)) {
+        _strokeCommitOperation = null;
+      }
+    });
+  }
+
+  Future<void> _commitActiveStroke() async {
+    final stroke = activeEraser ?? active;
+    if (stroke == null) {
+      lastSampleViewportPosition = null;
+      return;
+    }
+    final erasing = activeEraser != null;
+    setState(() => isRasterizing = true);
+    try {
+      await _ensureRasterized();
+      final changed = erasing
+          ? await rasterDrawing.eraseStroke(
+              stroke,
+              canvasWidth: canvasWidth.ceil(),
+              canvasPageHeight: canvasPageHeight.ceil(),
+              pageCount: widget.note.pageCount,
+            )
+          : true;
+      if (!erasing) {
+        await rasterDrawing.addStroke(
+          stroke,
+          canvasWidth: canvasWidth.ceil(),
+          canvasPageHeight: canvasPageHeight.ceil(),
+          pageCount: widget.note.pageCount,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        active = null;
+        activeEraser = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
+        lastSampleViewportPosition = null;
+        isRasterizing = false;
+        widget.note.rasterWidth = rasterDrawing.width;
+        widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+      });
+      if (changed) _markChanged();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => isRasterizing = false);
+      _markChanged();
+      _showRasterError(error);
+    }
   }
 
   Future<void> _persist() async {
+    await _ensureRasterized();
+    if (active != null || activeEraser != null) {
+      throw StateError('The active drawing could not be flattened');
+    }
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
@@ -803,6 +1254,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   .toList(),
             ))
         .toList();
+    widget.note.rasterPages = await rasterDrawing.encode();
+    widget.note.rasterWidth = rasterDrawing.width;
+    widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+    widget.note.strokes.clear();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
     driveSyncDebouncer.schedule(currentNoteId: widget.note.id);
@@ -812,7 +1267,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     syncService.syncInBackground(
       currentNoteId: widget.note.id,
       onResult: (result) {
-        if (!mounted || autosave.status != SaveStatus.saved) return;
+        if (!mounted ||
+            (hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
+            isSaving ||
+            isRasterizing ||
+            active != null ||
+            activeEraser != null) {
+          return;
+        }
         final syncedCurrent = result.currentNote;
         if (syncedCurrent != null &&
             syncedCurrent.updated.isAfter(widget.note.updated)) {
@@ -822,20 +1284,119 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> save({bool showMessage = true}) async {
-    await autosave.saveNow();
-    if (!showMessage || !mounted) return;
-    final message = autosave.status == SaveStatus.failed
-        ? 'Could not save this note. Your edits are still open.'
-        : 'Saved on this device';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  Future<void> save({bool showMessage = true}) {
+    final activeSave = _saveOperation;
+    if (activeSave != null) return activeSave;
+    final operation = _performSave(showMessage: showMessage);
+    _saveOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_saveOperation, operation)) _saveOperation = null;
+    });
   }
 
-  String get saveLabel => saveFailed ? 'Save failed' : 'Autosave on';
+  Future<void> _performSave({required bool showMessage}) async {
+    await _finalizeActiveStroke();
+    final savingRevision = _editRevision;
+    setState(() {
+      isSaving = true;
+      saveFailed = false;
+    });
+    try {
+      await _persist();
+      if (!mounted) return;
+      final hasNewerChanges = _editRevision != savingRevision;
+      setState(() {
+        isSaving = false;
+        saveFailed = false;
+        hasUnsavedChanges = hasNewerChanges;
+        if (!hasNewerChanges) rasterMigrationOnlyDirty = false;
+      });
+      if (showMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              hasNewerChanges
+                  ? 'Saved. Newer edits still need saving.'
+                  : 'Saved on this device',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        isSaving = false;
+        saveFailed = true;
+        hasUnsavedChanges = true;
+      });
+      if (showMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Save failed: $error')),
+        );
+      }
+    }
+  }
 
-  IconData get saveIcon =>
-      saveFailed ? Icons.error_outline : Icons.check_circle_outline;
+  Future<bool> _confirmSaveBeforeLeaving() async {
+    await _finalizeActiveStroke();
+    if (!hasUnsavedChanges) return true;
+    if (isSaving) {
+      await save(showMessage: false);
+      if (!mounted) return false;
+      if (saveFailed || hasUnsavedChanges) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('The note is still unsaved. Try saving again.'),
+          ),
+        );
+        return false;
+      }
+      return true;
+    }
+    final saveBeforeLeaving = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: const Text('Save this note before leaving?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Stay'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save and leave'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || saveBeforeLeaving != true) return false;
+    await save(showMessage: false);
+    if (saveFailed || hasUnsavedChanges) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The note is still unsaved. Try saving again.'),
+        ),
+      );
+      return false;
+    }
+    return true;
+  }
+
+  String get saveLabel => isSaving
+      ? 'Saving'
+      : saveFailed
+          ? 'Retry save'
+          : 'Save';
+
+  IconData get saveIcon => isSaving
+      ? Icons.hourglass_top
+      : saveFailed
+          ? Icons.error_outline
+          : hasUnsavedChanges
+              ? Icons.save
+              : Icons.save_outlined;
 
   Future<Uint8List> renderPreview() async {
     final recorder = ui.PictureRecorder();
@@ -850,6 +1411,20 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         orElse: () => PaperPattern.lined,
       ),
     ).paint(canvas, size);
+    final firstPage = rasterDrawing.pages[0];
+    if (firstPage != null) {
+      canvas.drawImageRect(
+        firstPage,
+        Rect.fromLTWH(
+          0,
+          0,
+          firstPage.width.toDouble(),
+          firstPage.height.toDouble(),
+        ),
+        Offset.zero & size,
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+    }
     final picture = recorder.endRecording();
     final image = await picture.toImage(
       size.width.toInt(),
@@ -863,7 +1438,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Future<void> pinWidget() async {
     await save(showMessage: false);
-    if (autosave.status == SaveStatus.failed) {
+    if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1004,9 +1579,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _applySyncedNote(Note syncedCurrent) {
     if (identical(syncedCurrent, widget.note)) return;
+    final oldRasterDrawing = rasterDrawing;
+    final nextRasterDrawing = RasterDrawingStore(
+      width: syncedCurrent.rasterWidth,
+      pageHeight: syncedCurrent.rasterPageHeight,
+    );
     applyingExternalChange = true;
     try {
       setState(() {
+        rasterDrawing = nextRasterDrawing;
+        rasterImagesLoaded = false;
+        rasterImageError = null;
+        legacyRasterizationScheduled = false;
         widget.note.title = syncedCurrent.title;
         widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
         widget.note.textBlockFormats = syncedCurrent.textBlockFormats
@@ -1030,13 +1614,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ))
             .toList();
         widget.note.updated = syncedCurrent.updated;
-        widget.note.strokes = syncedCurrent.strokes;
+        widget.note.strokes = List.of(syncedCurrent.strokes);
         widget.note.tasks = syncedCurrent.tasks;
         widget.note.backgroundColor = syncedCurrent.backgroundColor;
         widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
         widget.note.pageCount = syncedCurrent.pageCount;
-        gestureHistoryRecorded = false;
-        canvasEditor.clearHistory();
+        widget.note.rasterWidth = syncedCurrent.rasterWidth;
+        widget.note.rasterPageHeight = syncedCurrent.rasterPageHeight;
+        widget.note.rasterPages = Map.of(syncedCurrent.rasterPages);
+        canvasWidth = math.max(2000.0, syncedCurrent.rasterWidth.toDouble());
+        if (syncedCurrent.rasterPageHeight > 0) {
+          canvasPageHeight = syncedCurrent.rasterPageHeight.toDouble();
+        }
+        hasUnsavedChanges = false;
+        saveFailed = false;
+        rasterMigrationOnlyDirty = false;
         titleController.text = syncedCurrent.title;
         textBlockController.replace(
           syncedCurrent.textBlocks,
@@ -1046,6 +1638,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     } finally {
       applyingExternalChange = false;
     }
+    _rasterLoadOperation =
+        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldRasterDrawing.dispose();
+    });
   }
 
   Future<void> syncDrive({bool chooseFolder = false}) async {
@@ -1060,7 +1657,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     await save(showMessage: false);
-    if (autosave.status == SaveStatus.failed) {
+    if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1124,14 +1721,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _drawingToolbar() {
     final tools = [
-      (DrawTool.text, Icons.text_fields, 'Text'),
-      (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-      (DrawTool.pen, Icons.edit, 'Pen'),
-      (DrawTool.highlighter, Icons.border_color, 'Highlighter'),
-      (DrawTool.eraser, Icons.backspace_outlined, 'Eraser'),
-      (DrawTool.blur, Icons.blur_on, 'Blur'),
+      (DrawTool.text, 'Text'),
+      (DrawTool.pencil, 'Pencil'),
+      (DrawTool.pen, 'Pen'),
+      (DrawTool.highlighter, 'Highlighter'),
+      (DrawTool.eraser, 'Eraser'),
+      (DrawTool.blur, 'Blur'),
     ];
-    return SizedBox(
+    final toolbar = SizedBox(
       key: Key(
         Theme.of(context).platform == TargetPlatform.android
             ? 'android-drawing-toolbar'
@@ -1145,24 +1742,91 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             for (final entry in tools)
               Expanded(
                 child: IconButton(
-                  tooltip: entry.$3,
+                  tooltip: entry.$2,
                   style: IconButton.styleFrom(
                     backgroundColor: tool == entry.$1
                         ? Theme.of(context).colorScheme.primaryContainer
                         : null,
                   ),
                   onPressed: () => _selectTool(entry.$1),
-                  icon: Icon(entry.$2),
+                  icon: _toolbarIconFrame(_DrawingToolIcon(entry.$1)),
                 ),
               ),
             Expanded(
               child: PopupMenuButton<Color>(
                 tooltip: 'Drawing colour',
-                icon: Icon(Icons.circle, color: _activeStrokeColor),
+                icon: _toolbarIconFrame(
+                  Icon(Icons.circle, color: _activeStrokeColor),
+                ),
                 onSelected: _setActiveStrokeColor,
                 itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (toolWidths.containsKey(tool)) _strokeWidthControls(),
+        toolbar,
+      ],
+    );
+  }
+
+  Widget _toolbarIconFrame(Widget child) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _strokeWidthControls() {
+    final width = _activeToolWidth;
+    final isEraser = tool == DrawTool.eraser;
+    final label = isEraser ? 'Eraser size' : 'Stroke width';
+    return SizedBox(
+      key: const Key('stroke-width-controls'),
+      height: 52,
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: Row(
+          children: [
+            const SizedBox(width: 8),
+            Tooltip(
+              message: label,
+              child: _toolbarIconFrame(const Icon(Icons.line_weight, size: 20)),
+            ),
+            Expanded(
+              child: Slider(
+                key: const Key('stroke-width-slider'),
+                min: 1,
+                max: 48,
+                divisions: 47,
+                value: width.clamp(1, 48).toDouble(),
+                label: '${width.round()} px',
+                semanticFormatterCallback: (value) => '${value.round()} pixels',
+                onChanged: _setActiveToolWidth,
+              ),
+            ),
+            SizedBox(
+              width: 48,
+              child: Text(
+                '${width.round()} px',
+                textAlign: TextAlign.end,
+              ),
+            ),
+            const SizedBox(width: 12),
           ],
         ),
       ),
@@ -1181,17 +1845,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         color: Theme.of(context).colorScheme.surfaceContainerLow,
         child: Row(
           children: [
-            slot(IconButton(
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Drawing tools',
               onPressed: () => _selectTool(DrawTool.pen),
               icon: const Icon(Icons.gesture),
-            )),
-            slot(IconButton(
+            ))),
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Add text block',
               onPressed: addTextBlock,
-              icon: const Icon(Icons.add_box_outlined),
-            )),
-            slot(PopupMenuButton<String>(
+              icon: _DrawingToolIcon(DrawTool.text, size: 20),
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<String>(
               tooltip: 'Lists',
               enabled: canFormat,
               icon: const Icon(Icons.check_box_outlined),
@@ -1226,8 +1890,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ]),
                 ),
               ],
-            )),
-            slot(PopupMenuButton<Color>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<Color>(
               tooltip: 'Text colour',
               enabled: canFormat,
               onSelected: _setTextColor,
@@ -1238,8 +1902,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               itemBuilder: (_) => _colorMenuItems(
                 format == null ? Colors.black : Color(format.color),
               ),
-            )),
-            slot(PopupMenuButton<double>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<double>(
               tooltip: 'Font size',
               enabled: canFormat,
               icon: Text(
@@ -1252,20 +1916,22 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   PopupMenuItem(
                     value: size,
                     child: Row(children: [
-                      const Icon(Icons.format_size),
+                      _FontSizeMarkIcon(
+                        key: ValueKey('font-size-mark-tt-${size.round()}'),
+                      ),
                       const SizedBox(width: 12),
                       Text('${size.round()} pt'),
                     ]),
                   ),
               ],
-            )),
-            slot(IconButton(
+            ))),
+            slot(_toolbarIconFrame(IconButton(
               tooltip: 'Bold',
               isSelected: format?.bold ?? false,
               onPressed: canFormat ? _toggleTextBold : null,
               icon: const Icon(Icons.format_bold),
-            )),
-            slot(PopupMenuButton<bool>(
+            ))),
+            slot(_toolbarIconFrame(PopupMenuButton<bool>(
               tooltip: 'Indent',
               enabled: canFormat,
               icon: const Icon(Icons.format_indent_increase),
@@ -1288,22 +1954,30 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ]),
                 ),
               ],
-            )),
+            ))),
           ],
         ),
       ),
     );
   }
 
-  Widget _availableUpdateRow(UpdateInfo update) => Material(
-        key: const Key('available-update-row'),
-        color: Theme.of(context).colorScheme.secondaryContainer,
+  Widget _availableUpdateRow(UpdateInfo update) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      key: const Key('available-update-row'),
+      color: scheme.secondaryContainer,
+      child: DefaultTextStyle(
+        style: TextStyle(color: scheme.onSecondaryContainer),
         child: SizedBox(
           height: 44,
           child: Row(
             children: [
               const SizedBox(width: 12),
-              const Icon(Icons.system_update_outlined, size: 20),
+              Icon(
+                Icons.system_update_outlined,
+                size: 20,
+                color: scheme.onSecondaryContainer,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -1314,6 +1988,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               ),
               TextButton.icon(
                 onPressed: () => UpdateService.prompt(context),
+                style: TextButton.styleFrom(
+                  foregroundColor: scheme.onSecondaryContainer,
+                ),
                 icon: const Icon(Icons.download, size: 18),
                 label: const Text('Update'),
               ),
@@ -1321,7 +1998,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _canvasTextBlock(int index) {
     final format = textFormats[index];
@@ -1371,37 +2050,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
               contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _canvasTextBlockPreview(int index) {
-    final format = textFormats[index];
-    final baseStyle = TextStyle(
-      color: Color(format.color),
-      fontSize: format.fontSize,
-      fontWeight: format.bold ? FontWeight.bold : FontWeight.normal,
-    );
-    return Positioned(
-      left: format.x,
-      top: format.y,
-      width: format.width,
-      height: format.height,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 32, 8, 8),
-        child: ClipRect(
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: RichText(
-              text: textControllers[index].buildTextSpan(
-                context: context,
-                style: baseStyle,
-                withComposing: false,
-              ),
-              textScaler: MediaQuery.textScalerOf(context),
             ),
           ),
         ),
@@ -1585,80 +2233,65 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (item) => item.name == widget.note.backgroundPattern,
       orElse: () => PaperPattern.lined,
     );
+    final layer = Stack(
+      fit: StackFit.expand,
+      children: [
+        for (var index = 0; index < passes.length; index++)
+          Opacity(
+            opacity: passes[index].$3,
+            child: ClipPath(
+              clipBehavior: Clip.antiAlias,
+              clipper: BlurStrokeClipper(
+                stroke,
+                widthScale: passes[index].$1,
+                reclip: identical(stroke, active) ? canvasRepaint : null,
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CustomPaint(
+                    key: ValueKey('blur-paper-$index'),
+                    painter: StrokePainter(
+                      const [],
+                      null,
+                      background: Color(widget.note.backgroundColor),
+                      pattern: paperPattern,
+                      paintStrokes: false,
+                    ),
+                  ),
+                  ImageFiltered(
+                    key: ValueKey('blur-content-$index'),
+                    imageFilter: ui.ImageFilter.blur(
+                      sigmaX: passes[index].$2,
+                      sigmaY: passes[index].$2,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CustomPaint(
+                          key: ValueKey(
+                            'blur-strokes-$layerIndex-$index',
+                          ),
+                          painter: RasterDrawingPainter(
+                            pages: rasterDrawing.pages,
+                            pageHeight: canvasPageHeight.round(),
+                            legacyStrokes: priorStrokes,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
     return Positioned.fill(
       key: key,
       child: IgnorePointer(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            for (var index = 0; index < passes.length; index++)
-              Opacity(
-                opacity: passes[index].$3,
-                child: ClipPath(
-                  clipBehavior: Clip.antiAlias,
-                  clipper: BlurStrokeClipper(
-                    stroke,
-                    widthScale: passes[index].$1,
-                  ),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CustomPaint(
-                        key: ValueKey('blur-paper-$index'),
-                        painter: StrokePainter(
-                          const [],
-                          null,
-                          background: Color(widget.note.backgroundColor),
-                          pattern: paperPattern,
-                          paintStrokes: false,
-                        ),
-                      ),
-                      ImageFiltered(
-                        key: ValueKey('blur-content-$index'),
-                        imageFilter: ui.ImageFilter.blur(
-                          sigmaX: passes[index].$2,
-                          sigmaY: passes[index].$2,
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CustomPaint(
-                              key: ValueKey(
-                                'blur-strokes-$layerIndex-$index',
-                              ),
-                              painter: StrokePainter(
-                                priorStrokes,
-                                null,
-                                paintBackground: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (showText && textControllers.isNotEmpty)
-              ClipPath(
-                key: ValueKey('blur-sharp-text-$layerIndex'),
-                clipBehavior: Clip.antiAlias,
-                clipper: BlurStrokeClipper(
-                  stroke,
-                  widthScale: passes.first.$1,
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    for (var textIndex = 0;
-                        textIndex < textControllers.length;
-                        textIndex++)
-                      _canvasTextBlockPreview(textIndex),
-                  ],
-                ),
-              ),
-          ],
-        ),
+        child:
+            identical(stroke, active) ? RepaintBoundary(child: layer) : layer,
       ),
     );
   }
@@ -1671,8 +2304,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         content: const SingleChildScrollView(
           child: SelectableText(
             'Pennino uses Flutter and these direct open-source packages:\n\n'
-            'draw_your_image\n'
-            'github.com/chooyan-eng/draw_your_image\n\n'
             'file_selector, path_provider and uuid\n\n'
             'Repository links and licences are also listed in the README.',
           ),
@@ -1703,16 +2334,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
           if (didPop) return;
-          await save(showMessage: false);
-          if (!context.mounted) return;
-          if (autosave.status == SaveStatus.failed) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('The note is still unsaved. Try saving again.'),
-              ),
-            );
-            return;
-          }
+          if (!await _confirmSaveBeforeLeaving() || !context.mounted) return;
           if (widget.launcherMode) {
             await SystemNavigator.pop();
           } else {
@@ -1725,19 +2347,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ? IconButton(
                     tooltip: 'All notes',
                     onPressed: () async {
-                      await save(showMessage: false);
-                      if (autosave.status == SaveStatus.failed) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'The note is still unsaved. Try saving again.',
-                              ),
-                            ),
-                          );
-                        }
-                        return;
-                      }
+                      if (!await _confirmSaveBeforeLeaving()) return;
                       if (context.mounted)
                         await Navigator.push(
                           context,
@@ -1757,38 +2367,20 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             actions: [
-              IconButton(
-                tooltip: 'Undo',
-                onPressed: !canvasEditor.canUndo
-                    ? null
-                    : () {
-                        if (!canvasEditor.undo()) return;
-                        setState(() {});
-                        _markChanged();
-                      },
-                icon: const Icon(Icons.undo),
-              ),
-              IconButton(
-                tooltip: 'Redo',
-                onPressed: !canvasEditor.canRedo
-                    ? null
-                    : () {
-                        if (!canvasEditor.redo()) return;
-                        setState(() {});
-                        _markChanged();
-                      },
-                icon: const Icon(Icons.redo),
-              ),
               if (MediaQuery.sizeOf(context).width >= 700)
                 TextButton.icon(
-                  onPressed: save,
+                  onPressed: isSaving ? null : save,
                   icon: Icon(saveIcon, size: 19),
                   label: Text(saveLabel),
                 )
               else
                 IconButton(
-                  tooltip: saveLabel,
-                  onPressed: save,
+                  tooltip: saveFailed
+                      ? 'Save failed; retry'
+                      : hasUnsavedChanges
+                          ? 'Save unsaved note'
+                          : 'Save note',
+                  onPressed: isSaving ? null : save,
                   icon: Icon(saveIcon),
                 ),
               PopupMenuButton<String>(
@@ -1825,7 +2417,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   PopupMenuItem(
                     value: 'text',
                     child: ListTile(
-                      leading: const Icon(Icons.text_fields),
+                      leading: const _DrawingToolIcon(DrawTool.text),
                       title: Text(
                           showText ? 'Hide typed text' : 'Show typed text'),
                     ),
@@ -1898,22 +2490,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     children: [
                       for (final entry in [
-                        (DrawTool.text, Icons.text_fields, 'Text'),
-                        (DrawTool.pencil, Icons.create_outlined, 'Pencil'),
-                        (DrawTool.pen, Icons.edit, 'Pen'),
-                        (
-                          DrawTool.highlighter,
-                          Icons.border_color,
-                          'Highlighter'
-                        ),
-                        (DrawTool.eraser, Icons.backspace_outlined, 'Eraser'),
-                        (DrawTool.blur, Icons.blur_on, 'Blur'),
+                        (DrawTool.text, 'Text'),
+                        (DrawTool.pencil, 'Pencil'),
+                        (DrawTool.pen, 'Pen'),
+                        (DrawTool.highlighter, 'Highlighter'),
+                        (DrawTool.eraser, 'Eraser'),
+                        (DrawTool.blur, 'Blur'),
                       ])
                         Padding(
                           padding: const EdgeInsets.all(4),
                           child: ChoiceChip(
-                            label: Text(entry.$3),
-                            avatar: Icon(entry.$2, size: 18),
+                            label: Text(entry.$2),
+                            avatar: _DrawingToolIcon(entry.$1, size: 18),
                             selected: tool == entry.$1,
                             onSelected: (_) => _selectTool(entry.$1),
                           ),
@@ -2001,10 +2589,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final canvasWidth = math.max(2000.0, constraints.maxWidth);
+                    canvasWidth = math.max(
+                      math.max(2000.0, constraints.maxWidth),
+                      rasterDrawing.width.toDouble(),
+                    );
                     canvasViewportHeight = constraints.maxHeight;
-                    canvasPageHeight =
-                        math.max(1200.0, constraints.maxHeight * 1.5);
+                    canvasPageHeight = rasterDrawing.pageHeight > 0
+                        ? rasterDrawing.pageHeight.toDouble()
+                        : math.max(1200.0, constraints.maxHeight * 1.5);
+                    _scheduleLegacyRasterization();
                     final canvasHeight =
                         canvasPageHeight * widget.note.pageCount;
                     return ClipRect(
@@ -2034,10 +2627,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                 Positioned.fill(
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: tool == DrawTool.text
-                                        ? () => FocusManager
-                                            .instance.primaryFocus
-                                            ?.unfocus()
+                                    onTapUp: tool == DrawTool.text
+                                        ? (details) => _createTextBlock(
+                                              position: details.localPosition,
+                                            )
                                         : null,
                                     child: CustomPaint(
                                       painter: StrokePainter(
@@ -2056,37 +2649,41 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ),
-                                if (showText)
-                                  for (var index = 0;
-                                      index < textControllers.length;
-                                      index++)
-                                    _canvasTextBlock(index),
+                                Positioned.fill(
+                                  key: const Key('raster-drawing-layer'),
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: RasterDrawingPainter(
+                                        pages: rasterDrawing.pages,
+                                        pageHeight: canvasPageHeight.round(),
+                                        legacyStrokes: widget.note.strokes,
+                                        activePreview:
+                                            active == null || active!.blur
+                                                ? null
+                                                : activePreview,
+                                        activeEraser: activeEraser,
+                                        repaint: canvasRepaint,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                                 for (var index = 0;
-                                    index < widget.note.strokes.length;
+                                    index < activeStrokeChunks.length;
                                     index++)
-                                  if (widget.note.strokes[index].blur)
-                                    _blurStrokeLayer(
-                                      widget.note.strokes[index],
-                                      priorStrokes: widget.note.strokes
-                                          .take(index)
-                                          .where((stroke) => !stroke.blur)
-                                          .toList(),
-                                      layerIndex: index,
-                                      key: ValueKey('blur-layer-$index'),
-                                    )
-                                  else
-                                    Positioned.fill(
-                                      key: ValueKey('stroke-layer-$index'),
-                                      child: IgnorePointer(
+                                  Positioned.fill(
+                                    key: ValueKey('active-stroke-chunk-$index'),
+                                    child: IgnorePointer(
+                                      child: RepaintBoundary(
                                         child: CustomPaint(
                                           painter: StrokePainter(
-                                            [widget.note.strokes[index]],
+                                            [activeStrokeChunks[index]],
                                             null,
                                             paintBackground: false,
                                           ),
                                         ),
                                       ),
                                     ),
+                                  ),
                                 if (active != null && active!.blur)
                                   _blurStrokeLayer(
                                     active!,
@@ -2096,15 +2693,20 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     layerIndex: widget.note.strokes.length,
                                     key: const Key('active-blur-layer'),
                                   ),
-                                if (active != null && !active!.blur)
-                                  Positioned.fill(
-                                    key: const Key('active-stroke-layer'),
+                                if (!rasterImagesLoaded || isRasterizing)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: 2,
                                     child: IgnorePointer(
-                                      child: CustomPaint(
-                                        painter: StrokePainter(
-                                          [active!],
-                                          null,
-                                          paintBackground: false,
+                                      child: Semantics(
+                                        label: 'Preparing drawing',
+                                        liveRegion: true,
+                                        child: ColoredBox(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
                                         ),
                                       ),
                                     ),
@@ -2163,6 +2765,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   for (var index = 0;
                                       index < textControllers.length;
                                       index++)
+                                    _canvasTextBlock(index),
+                                if (showText)
+                                  for (var index = 0;
+                                      index < textControllers.length;
+                                      index++)
                                     _canvasTextBlockControls(index),
                               ],
                             ),
@@ -2182,7 +2789,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       : _availableUpdateRow(update),
                 ),
               if (tool == DrawTool.text)
-                SafeArea(top: false, child: _textToolbar())
+                SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _textToolbar(),
+                      _drawingToolbar(),
+                    ],
+                  ),
+                )
               else
                 SafeArea(
                   top: false,

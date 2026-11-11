@@ -1,9 +1,13 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/canvas_painter.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
+import 'package:notes_app/raster_drawing.dart';
 import 'package:notes_app/rich_text_controller.dart';
 import 'package:notes_app/update_service.dart';
 
@@ -21,32 +25,69 @@ Note noteWithStroke() => Note(
       ],
     );
 
+Note emptyNote() => Note(
+      id: 'empty-gesture-note',
+      title: 'Gesture test',
+      updated: DateTime.utc(2026, 11, 10),
+      strokes: [],
+    );
+
+RasterDrawingPainter rasterPainter(WidgetTester tester) => tester
+    .widget<CustomPaint>(
+      find.descendant(
+        of: find.byKey(const Key('raster-drawing-layer')),
+        matching: find.byType(CustomPaint),
+      ),
+    )
+    .painter! as RasterDrawingPainter;
+
+Future<Color> rasterPixel(
+  WidgetTester tester,
+  ui.Image image,
+  int x,
+  int y,
+) async {
+  final color = await tester.runAsync(() async {
+    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (data == null) throw StateError('Raster page could not be read');
+    final offset = (y * image.width + x) * 4;
+    return Color.fromARGB(
+      data.getUint8(offset + 3),
+      data.getUint8(offset),
+      data.getUint8(offset + 1),
+      data.getUint8(offset + 2),
+    );
+  });
+  if (color == null) throw StateError('Raster pixel could not be read');
+  return color;
+}
+
+double contrastRatio(Color foreground, Color background) {
+  final first = foreground.computeLuminance();
+  final second = background.computeLuminance();
+  return (math.max(first, second) + 0.05) / (math.min(first, second) + 0.05);
+}
+
+int alphaOf(Color color) => color.toARGB32() >> 24;
+
 void main() {
-  testWidgets('a stationary tap creates an undoable stroke point',
+  test('stroke painters skip unchanged strokes', () {
+    final stroke = noteWithStroke().strokes.single;
+    final original = StrokePainter([stroke], null);
+
+    expect(StrokePainter([stroke], null).shouldRepaint(original), isFalse);
+    expect(
+      StrokePainter([noteWithStroke().strokes.single], null)
+          .shouldRepaint(original),
+      isTrue,
+    );
+  });
+
+  testWidgets('a stationary tap rasterizes without drawing undo',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
-      ),
-    );
-
-    final canvas = find.byType(InteractiveViewer);
-    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
-    await tester.pump();
-
-    final undo = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.undo),
-    );
-    expect(undo.onPressed, isNotNull);
-  });
-
-  testWidgets('the highlighter starts in yellow', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(800, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final note = noteWithStroke();
+    final note = emptyNote();
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
@@ -54,17 +95,283 @@ void main() {
       ),
     );
 
+    await tester.pumpAndSettle();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    await tester.pumpAndSettle();
+
+    expect(note.strokes, isEmpty);
+    expect(rasterPainter(tester).pages, contains(0));
+    expect(find.byIcon(Icons.undo), findsNothing);
+    expect(find.byIcon(Icons.redo), findsNothing);
+  });
+
+  testWidgets('freehand moves update the active stroke', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(250, 250));
+    await gesture.moveTo(origin + const Offset(270, 270));
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(290, 280));
+    await tester.pump();
+    await tester.pump();
+    expect(rasterPainter(tester).activePreview!.points, hasLength(3));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(note.strokes, isEmpty);
+    expect(rasterPainter(tester).pages, contains(0));
+  });
+
+  testWidgets('nearby samples are skipped and the stroke endpoint is kept',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    final start = origin + const Offset(250, 250);
+    await gesture.down(start);
+    await gesture.moveTo(start + const Offset(0.5, 0));
+    await gesture.moveTo(start + const Offset(1, 0));
+    await gesture.moveTo(start + const Offset(2, 0));
+    await tester.pump();
+    final points = rasterPainter(tester).activePreview!.points;
+    expect(points, hasLength(2));
+    expect(points.last.x - points.first.x, closeTo(2, 0.01));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('long active strokes batch preview chunks before raster commit',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(250, 250));
+    for (var index = 1; index < 128; index++) {
+      await gesture.moveTo(origin + Offset(250 + index * 3, 250));
+    }
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('active-stroke-chunk-0')),
+      findsOneWidget,
+    );
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(note.strokes, isEmpty);
+    expect(rasterPainter(tester).pages, contains(0));
+  });
+
+  testWidgets('Android toolbar shows a T and a recognizable eraser icon',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 740));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('drawing-tool-icon-text')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('drawing-tool-icon-eraser')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.backspace_outlined), findsNothing);
+  });
+
+  testWidgets('tapping the canvas adds text at that position', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Text'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    final tapPosition = tester.getTopLeft(canvas) + const Offset(220, 180);
+    await tester.tapAt(tapPosition);
+    await tester.pumpAndSettle();
+
+    final textBlock = find.byKey(const ValueKey('canvas-text-block-0'));
+    expect(textBlock, findsOneWidget);
+    final position = tester.widget<Positioned>(textBlock);
+    expect(position.left, closeTo(220, 1));
+    expect(position.top, closeTo(180, 1));
+
+    final textToolbar = find.byKey(const Key('text-toolbar'));
+    final drawingToolbar = find.byKey(const Key('android-drawing-toolbar'));
+    expect(textToolbar, findsOneWidget);
+    expect(drawingToolbar, findsOneWidget);
+    expect(
+      tester.getTopLeft(textToolbar).dy,
+      lessThan(tester.getTopLeft(drawingToolbar).dy),
+    );
+    expect(
+      find.descendant(
+        of: textToolbar,
+        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.byTooltip('Add text block'),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is DecoratedBox &&
+              widget.decoration is BoxDecoration &&
+              (widget.decoration as BoxDecoration).border != null,
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('drawing width can be adjusted for pen and pencil',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final widthSlider = find.byKey(const Key('stroke-width-slider'));
+    expect(tester.widget<Slider>(widthSlider).value, 3);
+    await tester.tap(find.byTooltip('Pencil'));
+    await tester.pump();
+    expect(tester.widget<Slider>(widthSlider).value, 2);
+
+    await tester.drag(widthSlider, const Offset(80, 0));
+    await tester.pump();
+    expect(tester.widget<Slider>(widthSlider).value, greaterThan(2));
+  });
+
+  testWidgets('legacy drawing migrates beneath text blocks', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'legacy-raster-note',
+      title: 'Legacy raster note',
+      textBlocks: const ['Text stays above the drawing'],
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        noteWithStroke().strokes.single,
+        Stroke(
+          points: const [CanvasPoint(100, 120), CanvasPoint(200, 120)],
+          color: 0xff000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        Stroke(
+          points: const [CanvasPoint(100, 140), CanvasPoint(200, 140)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final stack = tester.widget<Stack>(
+      find.byKey(const Key('canvas-layer-stack')),
+    );
+    int layerIndex(Key key) =>
+        stack.children.indexWhere((child) => child.key == key);
+
+    expect(note.strokes, isEmpty);
+    expect(rasterPainter(tester).pages, contains(0));
+    expect(
+      layerIndex(const Key('raster-drawing-layer')),
+      lessThan(layerIndex(const ValueKey('canvas-text-block-0'))),
+    );
+    expect(find.byKey(const ValueKey('canvas-text-block-0')), findsOneWidget);
+  });
+
+  testWidgets('the highlighter starts in yellow', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Highlighter'));
     await tester.pump();
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(note.strokes.last.highlight, isTrue);
-    expect(note.strokes.last.color, Colors.yellow.toARGB32());
+    final pixel = await rasterPixel(
+      tester,
+      rasterPainter(tester).pages[0]!,
+      150,
+      100,
+    );
+    final pixelValue = pixel.toARGB32();
+    expect((pixelValue >> 16) & 0xff, greaterThan(0));
+    expect((pixelValue >> 8) & 0xff, greaterThan(0));
+    expect(pixelValue & 0xff, lessThan(20));
   });
 
-  testWidgets('the blur tool creates a pixel blur mask', (tester) async {
+  testWidgets('the blur tool commits pixel blur beneath text', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = noteWithStroke();
@@ -75,16 +382,28 @@ void main() {
       ),
     );
 
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Blur'));
     await tester.pump();
     final canvas = find.byType(InteractiveViewer);
-    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(canvas) + const Offset(150, 100),
+    );
     await tester.pump();
-
-    expect(note.strokes.last.blur, isTrue);
-    expect(note.strokes.last.width, 44);
-    expect(find.byType(BackdropFilter), findsNothing);
     expect(find.byType(ImageFiltered), findsWidgets);
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(note.strokes, isEmpty);
+    final pixel = await rasterPixel(
+      tester,
+      rasterPainter(tester).pages[0]!,
+      150,
+      108,
+    );
+    expect(alphaOf(pixel), greaterThan(0));
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsNothing);
   });
 
   testWidgets('the editor fits a narrow Android phone viewport',
@@ -94,7 +413,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.android),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
     await tester.pump();
@@ -123,7 +442,7 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final note = noteWithStroke();
+    final note = emptyNote();
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.android),
@@ -145,7 +464,7 @@ void main() {
 
     expect(viewer.transformationController!.value.getMaxScaleOnAxis(),
         greaterThan(1));
-    expect(note.strokes, hasLength(1));
+    expect(note.strokes, isEmpty);
     expect(note.pageCount, 1);
     await first.up();
     await second.up();
@@ -155,7 +474,7 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final note = noteWithStroke();
+    final note = emptyNote();
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
@@ -228,21 +547,21 @@ void main() {
       ),
     );
 
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Eraser'));
     await tester.pump();
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(note.strokes, hasLength(2));
-    expect(
-      note.strokes.every(
-        (stroke) => stroke.points.every(
-          (point) => (point.x - 650).abs() > 22,
-        ),
-      ),
-      isTrue,
+    expect(note.strokes, isEmpty);
+    final pixel = await rasterPixel(
+      tester,
+      rasterPainter(tester).pages[0]!,
+      650,
+      350,
     );
+    expect(alphaOf(pixel), 0);
     expect(note.textBlocks.single, 'Keep this text');
     expect(find.text('Keep this text'), findsOneWidget);
   });
@@ -255,14 +574,7 @@ void main() {
       title: 'Text first',
       textBlocks: const ['Always editable'],
       updated: DateTime.utc(2026, 11, 11),
-      strokes: [
-        Stroke(
-          points: const [CanvasPoint(80, 100), CanvasPoint(280, 100)],
-          color: 0xff000000,
-          width: 12,
-          highlight: false,
-        ),
-      ],
+      strokes: [],
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -276,9 +588,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
     await tester.pump();
 
-    expect(note.strokes, hasLength(1));
+    expect(note.strokes, isEmpty);
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
   });
 
   testWidgets('open-source repositories are disclosed in the app',
@@ -288,7 +600,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -297,7 +609,7 @@ void main() {
     await tester.tap(find.text('Open-source software'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('github.com/chooyan-eng/draw_your_image'),
+    expect(find.textContaining('file_selector, path_provider and uuid'),
         findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Licences'), findsOneWidget);
   });
@@ -308,7 +620,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -343,7 +655,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -401,7 +713,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -424,7 +736,41 @@ void main() {
     );
   });
 
-  testWidgets('blur affects earlier strokes while later strokes stay sharp',
+  testWidgets('text reflows when a text block is resized narrower',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pumpAndSettle();
+    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
+    final fieldFinder = find.byKey(const ValueKey('canvas-text-field-0'));
+    await tester.enterText(fieldFinder, List.filled(70, 'reflow').join(' '));
+    await tester.pumpAndSettle();
+
+    Positioned block() => tester.widget<Positioned>(blockFinder);
+    final initialWidth = block().width!;
+    final initialHeight = block().height!;
+    await tester.drag(
+      find.byKey(const ValueKey('resize-text-block-0')),
+      const Offset(-160, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(block().width, lessThan(initialWidth));
+    expect(block().height, greaterThan(initialHeight));
+    expect(tester.widget<TextField>(fieldFinder).maxLines, isNull);
+  });
+
+  testWidgets('migrated blur stays in the raster layer beneath text',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -461,6 +807,7 @@ void main() {
         home: EditorPage(note: note),
       ),
     );
+    await tester.pumpAndSettle();
 
     final stack = tester.widget<Stack>(
       find.byKey(const Key('canvas-layer-stack')),
@@ -468,40 +815,18 @@ void main() {
     int layerIndex(Key key) =>
         stack.children.indexWhere((child) => child.key == key);
 
+    expect(note.strokes, isEmpty);
+    expect(rasterPainter(tester).pages, contains(0));
     expect(
-        layerIndex(const ValueKey('stroke-layer-0')), greaterThanOrEqualTo(0));
-    expect(layerIndex(const ValueKey('blur-layer-1')), greaterThanOrEqualTo(0));
-    expect(
-        layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
-    expect(
-      layerIndex(const ValueKey('blur-layer-1')),
-      greaterThan(layerIndex(const ValueKey('stroke-layer-0'))),
+      layerIndex(const Key('raster-drawing-layer')),
+      lessThan(layerIndex(const ValueKey('canvas-text-block-0'))),
     );
-    expect(
-      layerIndex(const ValueKey('blur-layer-1')),
-      lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
-    );
-    final blurredContent = tester.widget<CustomPaint>(
-      find.byKey(const ValueKey('blur-strokes-1-7')),
-    );
-    final painter = blurredContent.painter! as StrokePainter;
-    expect(painter.strokes, [same(note.strokes[0])]);
+    expect(find.text('Sharp text'), findsOneWidget);
     expect(find.byType(BackdropFilter), findsNothing);
-    expect(find.byType(ImageFiltered), findsNWidgets(8));
-    expect(
-      find.byKey(const ValueKey('blur-sharp-text-1')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byType(ImageFiltered),
-        matching: find.text('Sharp text'),
-      ),
-      findsNothing,
-    );
+    expect(find.byType(ImageFiltered), findsNothing);
   });
 
-  testWidgets('normal autosave cycles do not flicker the toolbar status',
+  testWidgets('drawing changes wait for the manual save button',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -518,14 +843,13 @@ void main() {
       ),
     );
 
-    expect(find.text('Autosave on'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
     await tester.dragFrom(const Offset(300, 300), const Offset(80, 40));
     await tester.pump();
-    expect(find.text('Autosave on'), findsOneWidget);
-    expect(find.text('Unsaved'), findsNothing);
-    expect(find.text('Saving…'), findsNothing);
+    expect(find.byIcon(Icons.save), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Autosave on'), findsOneWidget);
+    expect(find.byIcon(Icons.save), findsOneWidget);
+    expect(find.text('Autosave on'), findsNothing);
   });
 
   testWidgets('bold applies to selected text instead of the whole block',
@@ -569,7 +893,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -580,7 +904,7 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('drawing-toolbar')), findsOneWidget);
     expect(find.byTooltip('Add text block'), findsOneWidget);
     expect(find.byTooltip('Lists'), findsOneWidget);
     expect(find.byTooltip('Text colour'), findsOneWidget);
@@ -590,6 +914,12 @@ void main() {
         matching: find.byType(ListView),
       ),
       findsNothing,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('text-toolbar'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('drawing-toolbar'))).dy,
+      ),
     );
 
     await tester.tap(find.byTooltip('Add text block'));
@@ -605,10 +935,11 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote()..textBlocks.add('Typed note');
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.android),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: note),
       ),
     );
 
@@ -616,11 +947,33 @@ void main() {
     await tester.tap(find.byTooltip('Text'));
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('android-drawing-toolbar')), findsNothing);
+    expect(find.byKey(const Key('android-drawing-toolbar')), findsOneWidget);
     expect(
       tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
       greaterThan(700),
     );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('text-toolbar'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('android-drawing-toolbar'))).dy,
+      ),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('text-toolbar')),
+        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Font size'));
+    await tester.pumpAndSettle();
+    final fontSizeMarks = find.byWidgetPredicate((widget) {
+      if (widget is! CustomPaint) return false;
+      final key = widget.key;
+      return key is ValueKey<String> &&
+          key.value.startsWith('font-size-mark-tt-');
+    });
+    expect(fontSizeMarks, findsNWidgets(6));
   });
 
   testWidgets('inline checklist marks toggle when tapped', (tester) async {
@@ -629,7 +982,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -662,7 +1015,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: noteWithStroke()),
+        home: EditorPage(note: emptyNote()),
       ),
     );
 
@@ -684,5 +1037,33 @@ void main() {
       tester.getCenter(find.byKey(const Key('available-update-row'))).dy,
       lessThan(tester.getCenter(find.byKey(const Key('drawing-toolbar'))).dy),
     );
+
+    void expectUpdateTextContrast() {
+      final textContext = tester.element(
+        find.text('Pennino 0.4.12 is available'),
+      );
+      final scheme = Theme.of(textContext).colorScheme;
+      final textColor = DefaultTextStyle.of(textContext).style.color!;
+      expect(contrastRatio(textColor, scheme.secondaryContainer),
+          greaterThanOrEqualTo(4.5));
+      final button = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Update'),
+      );
+      final buttonColor = button.style!.foregroundColor!.resolve({});
+      expect(contrastRatio(buttonColor!, scheme.secondaryContainer),
+          greaterThanOrEqualTo(4.5));
+    }
+
+    expectUpdateTextContrast();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          platform: TargetPlatform.windows,
+          brightness: Brightness.dark,
+        ),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    expectUpdateTextContrast();
   });
 }

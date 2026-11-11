@@ -58,10 +58,10 @@ class TextBlockController {
     activeIndex = _activeIndex;
   }
 
-  int add() {
+  int add({double? x, double? y}) {
     final format = TextBlockFormat(
-      x: 48 + (controllers.length % 3) * 24,
-      y: 48 + controllers.length * 184,
+      x: x ?? 48 + (controllers.length % 3) * 24,
+      y: y ?? 48 + controllers.length * 184,
     );
     formats.add(format);
     controllers.add(_createTextController('', format.styles));

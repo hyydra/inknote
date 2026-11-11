@@ -58,53 +58,71 @@ class NoteStore {
     }
 
     for (final noteId in noteIds) {
-      final primary = File('${directory.path}/$noteId.json');
-      final candidates = [
-        File('${primary.path}.tmp'),
-        primary,
-        File('${primary.path}.bak.tmp'),
-        File('${primary.path}.bak'),
-      ];
-      final valid = <(File, Note)>[];
-      for (final candidate in candidates) {
-        if (!await candidate.exists()) {
-          continue;
-        }
-        try {
-          final value = jsonDecode(await candidate.readAsString());
-          final note = Note.fromJson(Map<String, dynamic>.from(value as Map));
-          if (note.id == noteId && _safeNoteId.hasMatch(note.id)) {
-            valid.add((candidate, note));
-          }
-        } catch (_) {
-          // Keep damaged files for recovery or manual inspection.
-        }
-      }
-      if (valid.isEmpty) {
-        continue;
-      }
-
-      final selected = valid.first;
-      if (selected.$1.path != primary.path) {
-        final primaryIsValid = valid.any(
-          (item) => item.$1.path == primary.path,
-        );
-        if (await primary.exists() && !primaryIsValid) {
-          await primary.rename(
-            '${primary.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
-          );
-        }
-        await _queueForNote(
-          directory,
-          noteId,
-          () => _save(directory, noteId, jsonEncode(selected.$2.toJson())),
-        );
-      }
-      notes.add(selected.$2);
+      final note = await _loadNote(directory, noteId);
+      if (note != null) notes.add(note);
     }
 
     notes.sort((first, second) => second.updated.compareTo(first.updated));
     return notes;
+  }
+
+  Future<Note?> loadNote(String noteId) async {
+    _validateNoteId(noteId);
+    final directory = await folder;
+    return _loadNote(directory, noteId);
+  }
+
+  Future<Note?> _loadNote(Directory directory, String noteId) async {
+    final primary = File('${directory.path}/$noteId.json');
+    final temporary = File('${primary.path}.tmp');
+    final backupTemporary = File('${primary.path}.bak.tmp');
+    final backup = File('${primary.path}.bak');
+    final temporaryNote = await _readNoteFile(temporary, noteId);
+    final primaryNote = await _readNoteFile(primary, noteId);
+    final backupTemporaryNote = temporaryNote == null && primaryNote == null
+        ? await _readNoteFile(backupTemporary, noteId)
+        : null;
+    final backupNote = temporaryNote == null &&
+            primaryNote == null &&
+            backupTemporaryNote == null
+        ? await _readNoteFile(backup, noteId)
+        : null;
+    final selected = temporaryNote != null
+        ? (temporary, temporaryNote)
+        : primaryNote != null
+            ? (primary, primaryNote)
+            : backupTemporaryNote != null
+                ? (backupTemporary, backupTemporaryNote)
+                : backupNote == null
+                    ? null
+                    : (backup, backupNote);
+    if (selected == null) return null;
+
+    if (selected.$1.path != primary.path) {
+      if (await primary.exists() && primaryNote == null) {
+        await primary.rename(
+          '${primary.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
+        );
+      }
+      await _queueForNote(
+        directory,
+        noteId,
+        () => _save(directory, noteId, jsonEncode(selected.$2.toJson())),
+      );
+    }
+    return selected.$2;
+  }
+
+  Future<Note?> _readNoteFile(File file, String noteId) async {
+    if (!await file.exists()) return null;
+    try {
+      final value = jsonDecode(await file.readAsString());
+      final note = Note.fromJson(Map<String, dynamic>.from(value as Map));
+      return note.id == noteId && _safeNoteId.hasMatch(note.id) ? note : null;
+    } catch (_) {
+      // Keep damaged files for recovery or manual inspection.
+      return null;
+    }
   }
 
   Future<void> save(Note note) async {
