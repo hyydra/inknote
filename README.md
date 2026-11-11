@@ -53,7 +53,7 @@ To show a note on the Android home screen: open the note, choose **Update home w
 
 ## GitHub releases
 
-Pushing a version tag such as `v0.4.7` builds and publishes three assets:
+Pushing a version tag such as `v0.4.8` builds and publishes three assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
 - `Pennino-Windows.zip`: the portable Windows application.

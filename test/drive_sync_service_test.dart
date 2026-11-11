@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,6 +25,24 @@ class FakeSyncFolderBackend implements SyncFolderBackend {
   Future<void> writeFiles(Map<String, String> files) async {
     this.files = Map.of(files);
   }
+}
+
+class PausedSyncFolderBackend implements SyncFolderBackend {
+  final readStarted = Completer<void>();
+  final releaseRead = Completer<void>();
+
+  @override
+  Future<bool> configure({required bool chooseFolder}) async => true;
+
+  @override
+  Future<Map<String, String>> readFiles() async {
+    readStarted.complete();
+    await releaseRead.future;
+    return {};
+  }
+
+  @override
+  Future<void> writeFiles(Map<String, String> files) async {}
 }
 
 Note note(String id, String title, DateTime updated) => Note(
@@ -86,5 +105,25 @@ void main() {
 
     expect(await service.sync(), isNull);
     expect(backend.lastChooseFolder, isFalse);
+  });
+
+  test('background sync never makes a local caller await the provider',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final backend = PausedSyncFolderBackend();
+    final result = Completer<DriveSyncResult>();
+    final service = DriveSyncService(
+      store: NoteStore(directoryProvider: () async => directory),
+      backend: backend,
+    );
+
+    service.syncInBackground(onResult: result.complete);
+    await backend.readStarted.future;
+
+    expect(result.isCompleted, isFalse);
+    backend.releaseRead.complete();
+    await result.future;
+    expect(result.isCompleted, isTrue);
   });
 }
