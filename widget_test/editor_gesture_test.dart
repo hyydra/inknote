@@ -164,6 +164,8 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    await tester.pump();
 
     Positioned block() => tester.widget<Positioned>(
           find.byKey(const ValueKey('canvas-text-block-0')),
@@ -194,8 +196,104 @@ void main() {
     await tester.pump();
     expect(
       find.byKey(const ValueKey('resize-text-block-0')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('resize-text-block-0')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a text block grows when new lines no longer fit',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: noteWithStroke()),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pump();
+    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
+    final initialHeight = tester.widget<Positioned>(blockFinder).height!;
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      List.generate(14, (index) => 'Line ${index + 1}').join('\n'),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<Positioned>(blockFinder).height,
+      greaterThan(initialHeight),
+    );
+  });
+
+  testWidgets('later drawing layers stay above earlier blur layers',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'ordered-layers',
+      title: 'Ordered layers',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(20, 20), CanvasPoint(40, 40)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+        Stroke(
+          points: const [CanvasPoint(30, 30), CanvasPoint(60, 60)],
+          color: 0xff000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        Stroke(
+          points: const [CanvasPoint(40, 40), CanvasPoint(80, 80)],
+          color: 0xff000000,
+          width: 4,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final stack = tester.widget<Stack>(
+      find.byKey(const Key('canvas-layer-stack')),
+    );
+    int layerIndex(Key key) =>
+        stack.children.indexWhere((child) => child.key == key);
+
+    expect(
+        layerIndex(const ValueKey('stroke-layer-0')), greaterThanOrEqualTo(0));
+    expect(layerIndex(const ValueKey('blur-layer-1')), greaterThanOrEqualTo(0));
+    expect(
+        layerIndex(const ValueKey('stroke-layer-2')), greaterThanOrEqualTo(0));
+    expect(
+      layerIndex(const ValueKey('stroke-layer-0')),
+      lessThan(layerIndex(const ValueKey('blur-layer-1'))),
+    );
+    expect(
+      layerIndex(const ValueKey('blur-layer-1')),
+      lessThan(layerIndex(const ValueKey('stroke-layer-2'))),
+    );
+    expect(find.byType(BackdropFilter), findsNWidgets(4));
   });
 
   testWidgets('bold applies to selected text instead of the whole block',

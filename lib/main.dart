@@ -639,6 +639,34 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     });
   }
 
+  void _selectTool(DrawTool nextTool) {
+    if (nextTool != DrawTool.text) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+    setState(() {
+      tool = nextTool;
+      if (tool == DrawTool.text) showText = true;
+      if (tool != DrawTool.select) selectedStrokes.clear();
+    });
+  }
+
+  void _growTextBlockToFit(int index) {
+    if (index < 0 || index >= textControllers.length) return;
+    final format = textFormats[index];
+    final painter = TextPainter(
+      text: textControllers[index].buildTextSpan(
+        context: context,
+        withComposing: false,
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: math.max(1, format.width - 16));
+    final requiredHeight = math.max(90.0, painter.height + 48);
+    if (requiredHeight <= format.height) return;
+    setState(() => format.height = requiredHeight);
+    _markChanged();
+  }
+
   void _setTextFontSize(double size) {
     final controller = _activeTextController;
     if (controller == null) return;
@@ -1387,11 +1415,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                         ? Theme.of(context).colorScheme.primaryContainer
                         : null,
                   ),
-                  onPressed: () => setState(() {
-                    tool = entry.$1;
-                    if (tool == DrawTool.text) showText = true;
-                    if (tool != DrawTool.select) selectedStrokes.clear();
-                  }),
+                  onPressed: () => _selectTool(entry.$1),
                   icon: Icon(entry.$2),
                 ),
               ),
@@ -1429,7 +1453,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           children: [
             slot(IconButton(
               tooltip: 'Drawing tools',
-              onPressed: () => setState(() => tool = DrawTool.pen),
+              onPressed: () => _selectTool(DrawTool.pen),
               icon: const Icon(Icons.gesture),
             )),
             slot(IconButton(
@@ -1519,6 +1543,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             key: ValueKey('canvas-text-field-$index'),
             controller: textControllers[index],
             focusNode: textFocusNodes[index],
+            onChanged: (_) => _growTextBlockToFit(index),
             onTap: () {
               setState(() {
                 activeTextIndex = index;
@@ -1578,28 +1603,104 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               ),
             ),
           ),
-          Positioned(
-            left: 0,
-            right: 56,
-            top: 0,
-            height: 28,
-            child: Listener(
-              key: ValueKey('move-text-block-$index'),
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (_) => setState(() {
-                activeTextIndex = index;
-                tool = DrawTool.text;
-              }),
-              onPointerMove: (event) => setState(() {
-                format.x = math.max(0, format.x + event.delta.dx / scale);
-                format.y = math.max(0, format.y + event.delta.dy / scale);
-              }),
-              onPointerUp: (_) => _markChanged(),
-              onPointerCancel: (_) => _markChanged(),
-              child: const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.only(left: 6),
+          if (selected)
+            Positioned(
+              left: 0,
+              right: 56,
+              top: 0,
+              height: 28,
+              child: Listener(
+                key: ValueKey('move-text-block-$index'),
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => setState(() {
+                  activeTextIndex = index;
+                  tool = DrawTool.text;
+                }),
+                onPointerMove: (event) => setState(() {
+                  format.x = math.max(0, format.x + event.delta.dx / scale);
+                  format.y = math.max(0, format.y + event.delta.dy / scale);
+                }),
+                onPointerUp: (_) => _markChanged(),
+                onPointerCancel: (_) => _markChanged(),
+                child: const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: PenninoColors.leatherRaised,
+                        borderRadius: BorderRadius.all(Radius.circular(5)),
+                        border: Border.fromBorderSide(
+                          BorderSide(color: PenninoColors.gold),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black38,
+                            blurRadius: 3,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: SizedBox(
+                        width: 28,
+                        height: 24,
+                        child: Icon(
+                          Icons.drag_indicator,
+                          size: 18,
+                          color: PenninoColors.paleGold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (selected)
+            Positioned(
+              right: 24,
+              top: 0,
+              width: 28,
+              height: 28,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                tooltip: 'Delete text block',
+                onPressed: () => removeTextBlock(index),
+                icon: const Icon(Icons.close, size: 18),
+              ),
+            ),
+          if (selected)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              width: 32,
+              height: 32,
+              child: Listener(
+                key: ValueKey('resize-text-block-$index'),
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => setState(() {
+                  activeTextIndex = index;
+                  tool = DrawTool.text;
+                }),
+                onPointerMove: (event) => setState(() {
+                  format.width = math.max(
+                    140,
+                    format.width + event.delta.dx / scale,
+                  );
+                  format.height = math.max(
+                    90,
+                    format.height + event.delta.dy / scale,
+                  );
+                }),
+                onPointerUp: (_) {
+                  _growTextBlockToFit(index);
+                  _markChanged();
+                },
+                onPointerCancel: (_) {
+                  _growTextBlockToFit(index);
+                  _markChanged();
+                },
+                child: const Align(
+                  alignment: Alignment.bottomRight,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: PenninoColors.leatherRaised,
@@ -1617,10 +1718,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ),
                     child: SizedBox(
                       width: 28,
-                      height: 24,
+                      height: 28,
                       child: Icon(
-                        Icons.drag_indicator,
-                        size: 18,
+                        Icons.open_in_full,
+                        size: 16,
                         color: PenninoColors.paleGold,
                       ),
                     ),
@@ -1628,75 +1729,44 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          ),
-          if (selected)
-            Positioned(
-              right: 24,
-              top: 0,
-              width: 28,
-              height: 28,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: 'Delete text block',
-                onPressed: () => removeTextBlock(index),
-                icon: const Icon(Icons.close, size: 18),
-              ),
-            ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            width: 32,
-            height: 32,
-            child: Listener(
-              key: ValueKey('resize-text-block-$index'),
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (_) => setState(() {
-                activeTextIndex = index;
-                tool = DrawTool.text;
-              }),
-              onPointerMove: (event) => setState(() {
-                format.width = math.max(
-                  140,
-                  format.width + event.delta.dx / scale,
-                );
-                format.height = math.max(
-                  90,
-                  format.height + event.delta.dy / scale,
-                );
-              }),
-              onPointerUp: (_) => _markChanged(),
-              onPointerCancel: (_) => _markChanged(),
-              child: const Align(
-                alignment: Alignment.bottomRight,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: PenninoColors.leatherRaised,
-                    borderRadius: BorderRadius.all(Radius.circular(5)),
-                    border: Border.fromBorderSide(
-                      BorderSide(color: PenninoColors.gold),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black38,
-                        blurRadius: 3,
-                        offset: Offset(0, 1),
-                      ),
-                    ],
+        ],
+      ),
+    );
+  }
+
+  Widget _blurStrokeLayer(Stroke stroke, {Key? key}) {
+    const passes = <(double, double, double)>[
+      (1.25, 3, 0.18),
+      (1.05, 6, 0.28),
+      (0.85, 9, 0.42),
+      (0.65, 12, 0.70),
+    ];
+    return Positioned.fill(
+      key: key,
+      child: IgnorePointer(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            for (final pass in passes)
+              Opacity(
+                opacity: pass.$3,
+                child: ClipPath(
+                  clipBehavior: Clip.antiAlias,
+                  clipper: BlurStrokeClipper(
+                    stroke,
+                    widthScale: pass.$1,
                   ),
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: Icon(
-                      Icons.open_in_full,
-                      size: 16,
-                      color: PenninoColors.paleGold,
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(
+                      sigmaX: pass.$2,
+                      sigmaY: pass.$2,
                     ),
+                    child: const ColoredBox(color: Color(0x01ffffff)),
                   ),
                 ),
               ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1924,12 +1994,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             label: Text(entry.$3),
                             avatar: Icon(entry.$2, size: 18),
                             selected: tool == entry.$1,
-                            onSelected: (_) => setState(() {
-                              tool = entry.$1;
-                              if (tool == DrawTool.text) showText = true;
-                              if (tool != DrawTool.select)
-                                selectedStrokes.clear();
-                            }),
+                            onSelected: (_) => _selectTool(entry.$1),
                           ),
                         ),
                       if (Theme.of(context).platform == TargetPlatform.windows)
@@ -2068,22 +2133,31 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                               width: canvasWidth,
                               height: canvasHeight,
                               child: Stack(
+                                key: const Key('canvas-layer-stack'),
                                 clipBehavior: Clip.none,
                                 children: [
                                   Positioned.fill(
-                                    child: CustomPaint(
-                                      painter: StrokePainter(
-                                        widget.note.strokes,
-                                        active,
-                                        selectedIndices: selectedStrokes,
-                                        selectionScale: canvasTransform.scale,
-                                        background:
-                                            Color(widget.note.backgroundColor),
-                                        pattern: PaperPattern.values.firstWhere(
-                                          (item) =>
-                                              item.name ==
-                                              widget.note.backgroundPattern,
-                                          orElse: () => PaperPattern.lined,
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: tool == DrawTool.text
+                                          ? () => FocusManager
+                                              .instance.primaryFocus
+                                              ?.unfocus()
+                                          : null,
+                                      child: CustomPaint(
+                                        painter: StrokePainter(
+                                          const [],
+                                          null,
+                                          background: Color(
+                                            widget.note.backgroundColor,
+                                          ),
+                                          pattern:
+                                              PaperPattern.values.firstWhere(
+                                            (item) =>
+                                                item.name ==
+                                                widget.note.backgroundPattern,
+                                            orElse: () => PaperPattern.lined,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -2093,25 +2167,59 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         index < textControllers.length;
                                         index++)
                                       _canvasTextBlock(index),
-                                  for (final blurStroke in [
-                                    ...widget.note.strokes
-                                        .where((stroke) => stroke.blur),
-                                    if (active?.blur ?? false) active!,
-                                  ])
-                                    Positioned.fill(
-                                      child: ClipPath(
-                                        clipper: BlurStrokeClipper(blurStroke),
-                                        child: BackdropFilter(
-                                          filter: ui.ImageFilter.blur(
-                                            sigmaX: 12,
-                                            sigmaY: 12,
+                                  for (var index = 0;
+                                      index < widget.note.strokes.length;
+                                      index++)
+                                    if (widget.note.strokes[index].blur)
+                                      _blurStrokeLayer(
+                                        widget.note.strokes[index],
+                                        key: ValueKey('blur-layer-$index'),
+                                      )
+                                    else
+                                      Positioned.fill(
+                                        key: ValueKey('stroke-layer-$index'),
+                                        child: IgnorePointer(
+                                          child: CustomPaint(
+                                            painter: StrokePainter(
+                                              [widget.note.strokes[index]],
+                                              null,
+                                              paintBackground: false,
+                                            ),
                                           ),
-                                          child: ColoredBox(
-                                            color: Color(0x01ffffff),
+                                        ),
+                                      ),
+                                  if (active != null && active!.blur)
+                                    _blurStrokeLayer(
+                                      active!,
+                                      key: const Key('active-blur-layer'),
+                                    )
+                                  else if (active != null)
+                                    Positioned.fill(
+                                      key: const Key('active-stroke-layer'),
+                                      child: IgnorePointer(
+                                        child: CustomPaint(
+                                          painter: StrokePainter(
+                                            [active!],
+                                            null,
+                                            paintBackground: false,
                                           ),
                                         ),
                                       ),
                                     ),
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: StrokePainter(
+                                          widget.note.strokes,
+                                          null,
+                                          paintBackground: false,
+                                          paintStrokes: false,
+                                          selectedIndices: selectedStrokes,
+                                          selectionScale: canvasTransform.scale,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                   if (showText)
                                     for (var index = 0;
                                         index < textControllers.length;
@@ -2147,6 +2255,8 @@ class StrokePainter extends CustomPainter {
   final PaperPattern pattern;
   final Set<int> selectedIndices;
   final double selectionScale;
+  final bool paintBackground;
+  final bool paintStrokes;
   StrokePainter(
     this.strokes,
     this.active, {
@@ -2154,53 +2264,59 @@ class StrokePainter extends CustomPainter {
     this.pattern = PaperPattern.lined,
     this.selectedIndices = const {},
     this.selectionScale = 1,
+    this.paintBackground = true,
+    this.paintStrokes = true,
   });
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawColor(background, BlendMode.src);
-    final line = Paint()
-      ..color = background.computeLuminance() > 0.5
-          ? Colors.black.withValues(alpha: 0.12)
-          : Colors.white.withValues(alpha: 0.14)
-      ..strokeWidth = 0.8;
-    if (pattern == PaperPattern.lined || pattern == PaperPattern.grid) {
-      for (double y = 29; y < size.height; y += 29) {
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+    if (paintBackground) {
+      canvas.drawColor(background, BlendMode.src);
+      final line = Paint()
+        ..color = background.computeLuminance() > 0.5
+            ? Colors.black.withValues(alpha: 0.12)
+            : Colors.white.withValues(alpha: 0.14)
+        ..strokeWidth = 0.8;
+      if (pattern == PaperPattern.lined || pattern == PaperPattern.grid) {
+        for (double y = 29; y < size.height; y += 29) {
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+        }
       }
-    }
-    if (pattern == PaperPattern.grid) {
-      for (double x = 29; x < size.width; x += 29) {
-        canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+      if (pattern == PaperPattern.grid) {
+        for (double x = 29; x < size.width; x += 29) {
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+        }
       }
-    }
-    if (pattern == PaperPattern.dots) {
-      for (double y = 18; y < size.height; y += 24) {
-        for (double x = 18; x < size.width; x += 24) {
-          canvas.drawCircle(Offset(x, y), 1.2, line);
+      if (pattern == PaperPattern.dots) {
+        for (double y = 18; y < size.height; y += 24) {
+          for (double x = 18; x < size.width; x += 24) {
+            canvas.drawCircle(Offset(x, y), 1.2, line);
+          }
         }
       }
     }
-    for (final s in [...strokes, if (active != null) active!]) {
-      if (s.points.isEmpty || s.blur) continue;
-      final p = Paint()
-        ..color =
-            Color(s.color).withValues(alpha: s.highlight ? 0.32 : s.opacity)
-        ..strokeWidth = s.width
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-      if (s.points.length == 1) {
-        canvas.drawPoints(
-            ui.PointMode.points,
-            [
-              Offset(s.points.first.x, s.points.first.y),
-            ],
-            p);
-        continue;
+    if (paintStrokes) {
+      for (final s in [...strokes, if (active != null) active!]) {
+        if (s.points.isEmpty || s.blur) continue;
+        final p = Paint()
+          ..color =
+              Color(s.color).withValues(alpha: s.highlight ? 0.32 : s.opacity)
+          ..strokeWidth = s.width
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke;
+        if (s.points.length == 1) {
+          canvas.drawPoints(
+              ui.PointMode.points,
+              [
+                Offset(s.points.first.x, s.points.first.y),
+              ],
+              p);
+          continue;
+        }
+        final path = Path()..moveTo(s.points.first.x, s.points.first.y);
+        for (final pt in s.points.skip(1)) path.lineTo(pt.x, pt.y);
+        canvas.drawPath(path, p);
       }
-      final path = Path()..moveTo(s.points.first.x, s.points.first.y);
-      for (final pt in s.points.skip(1)) path.lineTo(pt.x, pt.y);
-      canvas.drawPath(path, p);
     }
     final selectionBounds = strokeBoundsForSelection(strokes, selectedIndices);
     if (selectionBounds != null) {
@@ -2230,14 +2346,15 @@ class StrokePainter extends CustomPainter {
 
 class BlurStrokeClipper extends CustomClipper<Path> {
   final Stroke stroke;
+  final double widthScale;
 
-  const BlurStrokeClipper(this.stroke);
+  const BlurStrokeClipper(this.stroke, {this.widthScale = 1});
 
   @override
   Path getClip(Size size) {
     final path = Path();
     if (stroke.points.isEmpty) return path;
-    final radius = stroke.width / 2;
+    final radius = stroke.width * widthScale / 2;
     void addBrush(CanvasPoint point) {
       path.addOval(Rect.fromCircle(
         center: Offset(point.x, point.y),
