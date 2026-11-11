@@ -80,6 +80,15 @@ Future<void> main() async {
       richStyle.fontSize, 30.0, 'rich text size survives serialization');
   print('PASS multiple text blocks survive serialization');
 
+  blocks.pageCount = 3;
+  final pagedRoundTrip = Note.fromJson(blocks.toJson());
+  expectEqual(
+    pagedRoundTrip.pageCount,
+    3,
+    'continuous page count survives serialization',
+  );
+  print('PASS continuous page count survives serialization');
+
   final blurStroke = Stroke.fromJson(Stroke(
     points: const [CanvasPoint(10, 20), CanvasPoint(30, 40)],
     color: 0x00000000,

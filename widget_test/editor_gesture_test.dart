@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/main.dart';
@@ -144,6 +145,32 @@ void main() {
     expect(note.strokes, hasLength(1));
     await first.up();
     await second.up();
+  });
+
+  testWidgets('scrolling near the bottom appends a marked page',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final canvas = find.byType(InteractiveViewer);
+    final position = tester.getCenter(canvas);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: position,
+        scrollDelta: const Offset(0, 700),
+      ),
+    );
+    await tester.pump();
+
+    expect(note.pageCount, 2);
+    expect(find.text('1/2'), findsOneWidget);
   });
 
   testWidgets('eraser removes drawings without touching typed text',

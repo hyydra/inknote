@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_print
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:notes_app/note_data.dart';
@@ -54,22 +55,72 @@ Future<void> main() async {
 
   final directory = await Directory.systemTemp.createTemp('notes-queue-');
   try {
-    final store = NoteStore(directoryProvider: () async => directory);
-    final first = store.save(
+    final firstSaveStarted = Completer<void>();
+    final continueFirstSave = Completer<void>();
+    final firstStore = NoteStore(
+      directoryProvider: () async => directory,
+      afterSaveStage: (stage) async {
+        if (stage == SaveStage.temporaryWritten) {
+          firstSaveStarted.complete();
+          await continueFirstSave.future;
+        }
+      },
+    );
+    final secondStore = NoteStore(directoryProvider: () async => directory);
+    final first = firstStore.save(
       note('Queued first', DateTime.utc(2026, 11, 9, 12)),
     );
-    final second = store.save(
+    await firstSaveStarted.future;
+    final second = secondStore.save(
       note('Queued second', DateTime.utc(2026, 11, 9, 13)),
     );
+    await Future<void>.delayed(Duration.zero);
+    continueFirstSave.complete();
     await Future.wait([first, second]);
-    final loaded = await store.load();
+    final loaded = await secondStore.load();
     expectEqual(
       loaded.single.title,
       'Queued second',
-      'concurrent save requests publish in call order',
+      'separate stores serialize writes to the same note in call order',
     );
-    print('PASS queued saves publish in call order');
+    print('PASS separate stores serialize writes to the same note');
   } finally {
     await directory.delete(recursive: true);
+  }
+
+  final deleteDirectory =
+      await Directory.systemTemp.createTemp('notes-delete-queue-');
+  try {
+    final saveStarted = Completer<void>();
+    final continueSave = Completer<void>();
+    final saveStore = NoteStore(
+      directoryProvider: () async => deleteDirectory,
+      afterSaveStage: (stage) async {
+        if (stage == SaveStage.temporaryWritten) {
+          saveStarted.complete();
+          await continueSave.future;
+        }
+      },
+    );
+    final deleteStore =
+        NoteStore(directoryProvider: () async => deleteDirectory);
+    final pendingSave = saveStore.save(
+      note('Deleted after save', DateTime.utc(2026, 11, 9, 14)),
+    );
+    await saveStarted.future;
+    final pendingDelete = deleteStore.delete(
+      note('Deleted after save', DateTime.utc(2026, 11, 9, 14)),
+    );
+    await Future<void>.delayed(Duration.zero);
+    continueSave.complete();
+    await Future.wait([pendingSave, pendingDelete]);
+    expectEqual(
+      (await deleteStore.load()).isEmpty,
+      true,
+      'queued delete runs after and removes the pending save',
+    );
+    print('PASS separate stores serialize delete after a pending save');
+  } finally {
+    await deleteDirectory.delete(recursive: true);
   }
 }

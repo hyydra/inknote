@@ -70,6 +70,65 @@ class StrokeHistory {
   }
 }
 
+class CanvasEditorController {
+  final Note note;
+  final StrokeHistory history;
+
+  CanvasEditorController(this.note, {StrokeHistory? history})
+      : history = history ?? StrokeHistory();
+
+  bool get canUndo => history.canUndo;
+  bool get canRedo => history.canRedo;
+
+  void recordHistory() => history.record(note.strokes);
+
+  int? hitTest(
+    CanvasPoint viewportPoint,
+    CanvasTransform transform, {
+    double screenTolerance = 14,
+  }) =>
+      hitTestStrokeAtViewport(
+        note.strokes,
+        viewportPoint,
+        transform,
+        screenTolerance: screenTolerance,
+      );
+
+  bool translateSelection(
+    Set<int> selectedIndices,
+    CanvasPoint viewportDelta,
+    CanvasTransform transform,
+  ) =>
+      translateSelectedFromViewportDelta(
+        note.strokes,
+        selectedIndices,
+        viewportDelta,
+        transform,
+      );
+
+  bool removeStrokeAt(int index) {
+    if (index < 0 || index >= note.strokes.length) return false;
+    note.strokes.removeAt(index);
+    return true;
+  }
+
+  bool undo() {
+    final strokes = history.undo(note.strokes);
+    if (strokes == null) return false;
+    note.strokes = strokes;
+    return true;
+  }
+
+  bool redo() {
+    final strokes = history.redo(note.strokes);
+    if (strokes == null) return false;
+    note.strokes = strokes;
+    return true;
+  }
+
+  void clearHistory() => history.clear();
+}
+
 int? hitTestStrokeAtViewport(
   List<Stroke> strokes,
   CanvasPoint viewportPoint,

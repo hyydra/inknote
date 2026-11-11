@@ -22,6 +22,7 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 ## Highlights
 - Multiple local notes with typed text, checklists and editable drawing strokes. Drawing tools include pencil, pen, a yellow-default highlighter, pixel-blur brush, whole-stroke eraser and undo/redo.
 - A large canvas with direct two-finger pan and zoom, plus stroke selection, movement and deletion at any zoom level. No separate Hand mode is required.
+- Scrolling beyond the bottom automatically appends another continuous page, with a visible divider and page counter; the page count is saved with the note.
 - Each note can use a white, cream, blue, green, red or dark background with plain, lined, grid or dotted paper patterns.
 - A persistent launcher canvas opens immediately when the app starts, so handwriting can begin without first creating or selecting a note. The library remains available from the top-left icon.
 - On Android, the cloud-sync button selects a writable Google Drive folder through the system folder picker, and the folder can be reselected if access expires. On Windows, it selects a local Google Drive for Desktop folder. Sync is two-way, imports existing Pennino JSON notes, and resolves matching note IDs by their latest update timestamp without requiring a Google Cloud API key.
@@ -60,11 +61,14 @@ Pushing a version tag such as `v0.4.6` builds and publishes three assets:
 
 Android releases require the four repository secrets documented in the release workflow: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Keep the original keystore backed up permanently; Android updates must use the same signing key.
 
+The in-app Android and Windows updaters require GitHub release assets to include a SHA-256 digest. Downloads are verified against that digest before they are handed to the platform installer.
+
 ## Open-source software
 
 Pennino is MIT-licensed and builds on the following direct open-source projects. Their own licence terms continue to apply:
 
 - [Flutter](https://github.com/flutter/flutter) — cross-platform application framework (BSD-3-Clause).
+- [crypto](https://pub.dev/packages/crypto) — SHA-256 verification of downloaded updates (BSD-3-Clause).
 - [draw_your_image](https://github.com/chooyan-eng/draw_your_image) — stylus pressure/tilt data model and unsmoothed stroke path support (Apache-2.0).
 - [file_selector](https://github.com/flutter/packages/tree/main/packages/file_selector) — native file and folder selection (BSD-3-Clause).
 - [path_provider](https://github.com/flutter/packages/tree/main/packages/path_provider/path_provider) — platform application-data paths (BSD-3-Clause).

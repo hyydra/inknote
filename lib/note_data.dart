@@ -195,6 +195,7 @@ class Note {
   List<TextBlockFormat> textBlockFormats;
   int backgroundColor;
   String backgroundPattern;
+  int pageCount;
   DateTime updated;
   List<Stroke> strokes;
   List<TaskItem> tasks;
@@ -207,6 +208,7 @@ class Note {
     List<TextBlockFormat>? textBlockFormats,
     this.backgroundColor = 0xfffffdf7,
     this.backgroundPattern = 'lined',
+    this.pageCount = 1,
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
@@ -249,6 +251,7 @@ class Note {
       }).toList(),
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
+      pageCount: (value['pageCount'] as int? ?? 1).clamp(1, 10000),
       updated: DateTime.parse(value['updated'] as String),
       strokes: (value['strokes'] as List? ?? const [])
           .map(
@@ -276,6 +279,7 @@ class Note {
             .toList(),
         'backgroundColor': backgroundColor,
         'backgroundPattern': backgroundPattern,
+        'pageCount': pageCount,
         'updated': updated.toIso8601String(),
         'strokes': strokes.map((stroke) => stroke.toJson()).toList(),
         'tasks': tasks.map((task) => task.toJson()).toList(),

@@ -189,4 +189,24 @@ void main() {
     'restored selection keeps its moved position',
   );
   print('PASS undo and redo restore selection movement and deletion');
+
+  final controllerNote = Note(
+    id: 'canvas-controller',
+    title: 'Controller test',
+    updated: DateTime.utc(2026, 11, 9),
+    strokes: [stroke(1, 2, 3, 4)],
+  );
+  final controller = CanvasEditorController(controllerNote);
+  controller.recordHistory();
+  controllerNote.strokes.add(stroke(10, 20, 30, 40));
+  expectEqual(controller.undo(), true, 'controller undo succeeds');
+  expectEqual(
+      controllerNote.strokes.length, 1, 'controller restores saved strokes');
+  expectEqual(controller.redo(), true, 'controller redo succeeds');
+  expectEqual(
+      controllerNote.strokes.length, 2, 'controller restores later strokes');
+  expectEqual(controller.canUndo, true, 'controller exposes undo availability');
+  expectEqual(
+      controller.canRedo, false, 'controller exposes redo availability');
+  print('PASS canvas controller coordinates note history');
 }
