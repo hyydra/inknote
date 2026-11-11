@@ -10,6 +10,8 @@ import 'package:notes_app/note_store.dart';
 class FakeSyncFolderBackend implements SyncFolderBackend {
   bool configured = true;
   bool? lastChooseFolder;
+  int readCount = 0;
+  int writeCount = 0;
   Map<String, String> files = {};
 
   @override
@@ -19,10 +21,14 @@ class FakeSyncFolderBackend implements SyncFolderBackend {
   }
 
   @override
-  Future<Map<String, String>> readFiles() async => Map.of(files);
+  Future<Map<String, String>> readFiles() async {
+    readCount++;
+    return Map.of(files);
+  }
 
   @override
   Future<void> writeFiles(Map<String, String> files) async {
+    writeCount++;
     this.files = Map.of(files);
   }
 }
@@ -125,5 +131,53 @@ void main() {
     backend.releaseRead.complete();
     await result.future;
     expect(result.isCompleted, isTrue);
+  });
+
+  test('rapid saves collapse into one delayed Drive sync', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final backend = FakeSyncFolderBackend();
+    final service = DriveSyncService(
+      store: NoteStore(directoryProvider: () async => directory),
+      backend: backend,
+    );
+    final debouncer = DriveSyncDebouncer(
+      service: service,
+      delay: const Duration(milliseconds: 30),
+    );
+    addTearDown(debouncer.dispose);
+
+    debouncer.schedule(currentNoteId: 'note-1');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    debouncer.schedule(currentNoteId: 'note-1');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    debouncer.schedule(currentNoteId: 'note-1');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    expect(backend.readCount, 1);
+    expect(backend.writeCount, 1);
+    expect(debouncer.hasPendingSync, isFalse);
+  });
+
+  test('flush sends one pending batch immediately', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final backend = FakeSyncFolderBackend();
+    final debouncer = DriveSyncDebouncer(
+      service: DriveSyncService(
+        store: NoteStore(directoryProvider: () async => directory),
+        backend: backend,
+      ),
+      delay: const Duration(minutes: 1),
+    );
+    addTearDown(debouncer.dispose);
+
+    debouncer.schedule(currentNoteId: 'note-1');
+    debouncer.flush();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(backend.readCount, 1);
+    expect(backend.writeCount, 1);
+    expect(debouncer.hasPendingSync, isFalse);
   });
 }

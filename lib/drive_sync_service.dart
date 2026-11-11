@@ -18,6 +18,47 @@ class DriveSyncResult {
   const DriveSyncResult({required this.noteCount, this.currentNote});
 }
 
+class DriveSyncDebouncer {
+  final DriveSyncService service;
+  final Duration delay;
+  Timer? _timer;
+  String? _currentNoteId;
+
+  DriveSyncDebouncer({
+    required this.service,
+    this.delay = const Duration(seconds: 8),
+  });
+
+  bool get hasPendingSync => _timer != null;
+
+  void schedule({String? currentNoteId}) {
+    _currentNoteId = currentNoteId;
+    _timer?.cancel();
+    _timer = Timer(delay, _runPending);
+  }
+
+  void flush() {
+    if (_timer == null) return;
+    _timer!.cancel();
+    _runPending();
+  }
+
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+    _currentNoteId = null;
+  }
+
+  void dispose() => cancel();
+
+  void _runPending() {
+    final noteId = _currentNoteId;
+    _timer = null;
+    _currentNoteId = null;
+    service.syncInBackground(currentNoteId: noteId);
+  }
+}
+
 abstract interface class SyncFolderBackend {
   Future<bool> configure({required bool chooseFolder});
   Future<Map<String, String>> readFiles();
