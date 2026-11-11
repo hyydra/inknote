@@ -62,9 +62,6 @@ jobs:
       - name: Build Windows app
         shell: pwsh
         run: flutter build windows --release --dart-define=APP_VERSION=$($env:GITHUB_REF_NAME.TrimStart('v'))
-      - name: Package portable Windows app
-        shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Pennino-Windows.zip
       - name: Build Windows installer
         shell: pwsh
         run: |
@@ -78,9 +75,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: |
-            Pennino-Windows.zip
-            Pennino-Windows-Setup.exe
+          path: Pennino-Windows-Setup.exe
 
   publish:
     needs: [android, windows]
@@ -94,8 +89,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows.zip Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Pennino ${GITHUB_REF_NAME#v}" --latest
           else
-            gh release create "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows.zip Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --title "Pennino ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag
+            gh release create "$GITHUB_REF_NAME" Pennino-Android.apk Pennino-Windows-Setup.exe --repo "$GITHUB_REPOSITORY" --title "Pennino ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag
           fi
