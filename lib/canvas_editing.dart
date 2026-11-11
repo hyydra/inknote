@@ -17,23 +17,6 @@ class CanvasTransform {
         (point.x - translationX) / scale,
         (point.y - translationY) / scale,
       );
-
-  CanvasPoint sceneDeltaFromViewport(CanvasPoint delta) =>
-      CanvasPoint(delta.x / scale, delta.y / scale);
-}
-
-class StrokeBounds {
-  final double left;
-  final double top;
-  final double right;
-  final double bottom;
-
-  const StrokeBounds({
-    required this.left,
-    required this.top,
-    required this.right,
-    required this.bottom,
-  });
 }
 
 class StrokeHistory {
@@ -94,21 +77,19 @@ class CanvasEditorController {
         screenTolerance: screenTolerance,
       );
 
-  bool translateSelection(
-    Set<int> selectedIndices,
-    CanvasPoint viewportDelta,
-    CanvasTransform transform,
-  ) =>
-      translateSelectedFromViewportDelta(
-        note.strokes,
-        selectedIndices,
-        viewportDelta,
-        transform,
-      );
-
-  bool removeStrokeAt(int index) {
-    if (index < 0 || index >= note.strokes.length) return false;
-    note.strokes.removeAt(index);
+  bool eraseAt(
+    CanvasPoint viewportPoint,
+    CanvasTransform transform, {
+    double screenRadius = 18,
+  }) {
+    final result = eraseStrokesAtViewport(
+      note.strokes,
+      viewportPoint,
+      transform,
+      screenRadius: screenRadius,
+    );
+    if (!result.$2) return false;
+    note.strokes = result.$1;
     return true;
   }
 
@@ -146,35 +127,79 @@ int? hitTestStrokeAtViewport(
   return null;
 }
 
-bool translateSelectedFromViewportDelta(
+(List<Stroke>, bool) eraseStrokesAtViewport(
   List<Stroke> strokes,
-  Set<int> selectedIndices,
-  CanvasPoint viewportDelta,
-  CanvasTransform transform,
-) {
-  if (selectedIndices.isEmpty ||
-      (viewportDelta.x == 0 && viewportDelta.y == 0)) {
-    return false;
-  }
-  final sceneDelta = transform.sceneDeltaFromViewport(viewportDelta);
+  CanvasPoint viewportPoint,
+  CanvasTransform transform, {
+  double screenRadius = 18,
+}) {
+  final center = transform.sceneFromViewport(viewportPoint);
+  final radius = screenRadius / transform.scale;
+  final output = <Stroke>[];
   var changed = false;
-  for (final index in selectedIndices) {
-    if (index < 0 || index >= strokes.length) continue;
-    final stroke = strokes[index];
-    strokes[index] = Stroke(
-      points: stroke.points
-          .map(
-            (point) => CanvasPoint(
-              point.x + sceneDelta.x,
-              point.y + sceneDelta.y,
-              pressure: point.pressure,
-              pressureMin: point.pressureMin,
-              pressureMax: point.pressureMax,
-              tilt: point.tilt,
-              orientation: point.orientation,
-            ),
-          )
-          .toList(),
+  for (final stroke in strokes) {
+    final eraseDistance = radius + stroke.width / 2;
+    if (_distanceToStroke(center, stroke) > eraseDistance) {
+      output.add(stroke);
+      continue;
+    }
+    changed = true;
+    final samples = _densifyPoints(
+      stroke.points,
+      maxStep: math.max(1, radius / 4),
+    );
+    var segment = <CanvasPoint>[];
+    void flush() {
+      if (segment.isNotEmpty) {
+        output.add(_copyStroke(stroke, segment));
+        segment = <CanvasPoint>[];
+      }
+    }
+
+    for (final point in samples) {
+      if (_distance(center, point) <= eraseDistance) {
+        flush();
+      } else {
+        segment.add(point);
+      }
+    }
+    flush();
+  }
+  return (changed ? output : strokes, changed);
+}
+
+List<CanvasPoint> _densifyPoints(
+  List<CanvasPoint> points, {
+  required double maxStep,
+}) {
+  if (points.length < 2) return List<CanvasPoint>.from(points);
+  final output = <CanvasPoint>[points.first];
+  for (var index = 1; index < points.length; index++) {
+    final from = points[index - 1];
+    final to = points[index];
+    final distance = _distance(from, to);
+    final steps = math.max(1, (distance / maxStep).ceil());
+    for (var step = 1; step <= steps; step++) {
+      final amount = step / steps;
+      output.add(CanvasPoint(
+        from.x + (to.x - from.x) * amount,
+        from.y + (to.y - from.y) * amount,
+        pressure: from.pressure + (to.pressure - from.pressure) * amount,
+        pressureMin:
+            from.pressureMin + (to.pressureMin - from.pressureMin) * amount,
+        pressureMax:
+            from.pressureMax + (to.pressureMax - from.pressureMax) * amount,
+        tilt: from.tilt + (to.tilt - from.tilt) * amount,
+        orientation:
+            from.orientation + (to.orientation - from.orientation) * amount,
+      ));
+    }
+  }
+  return output;
+}
+
+Stroke _copyStroke(Stroke stroke, List<CanvasPoint> points) => Stroke(
+      points: points,
       color: stroke.color,
       width: stroke.width,
       highlight: stroke.highlight,
@@ -182,33 +207,6 @@ bool translateSelectedFromViewportDelta(
       opacity: stroke.opacity,
       pressureSensitive: stroke.pressureSensitive,
     );
-    changed = true;
-  }
-  return changed;
-}
-
-StrokeBounds? strokeBoundsForSelection(
-  List<Stroke> strokes,
-  Set<int> selectedIndices,
-) {
-  double? left;
-  double? top;
-  double? right;
-  double? bottom;
-  for (final index in selectedIndices) {
-    if (index < 0 || index >= strokes.length) continue;
-    for (final point in strokes[index].points) {
-      left = left == null ? point.x : math.min(left, point.x);
-      top = top == null ? point.y : math.min(top, point.y);
-      right = right == null ? point.x : math.max(right, point.x);
-      bottom = bottom == null ? point.y : math.max(bottom, point.y);
-    }
-  }
-  if (left == null || top == null || right == null || bottom == null) {
-    return null;
-  }
-  return StrokeBounds(left: left, top: top, right: right, bottom: bottom);
-}
 
 double _distanceToStroke(CanvasPoint point, Stroke stroke) {
   if (stroke.points.isEmpty) return double.infinity;

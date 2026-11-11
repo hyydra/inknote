@@ -27,6 +27,7 @@ class UpdateService {
   static const _channel = MethodChannel('notes/update');
   static bool _checked = false;
   static final _sha256Pattern = RegExp(r'^[a-fA-F0-9]{64}$');
+  static final ValueNotifier<UpdateInfo?> availableUpdate = ValueNotifier(null);
 
   static Map<String, dynamic>? selectAsset(
     List<Map<String, dynamic>> assets, {
@@ -171,6 +172,7 @@ class UpdateService {
     }
     if (!context.mounted) return;
     final availableUpdate = update;
+    UpdateService.availableUpdate.value = availableUpdate;
     if (availableUpdate == null) {
       if (!automatic) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -179,6 +181,7 @@ class UpdateService {
       }
       return;
     }
+    if (automatic) return;
     final install = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
