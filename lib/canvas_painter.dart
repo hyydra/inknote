@@ -23,6 +23,7 @@ class StrokePainter extends CustomPainter {
   final bool paintBackground;
   final bool paintStrokes;
   final bool paintSinglePoint;
+  final BlendMode blendMode;
 
   StrokePainter(
     this.strokes,
@@ -32,6 +33,7 @@ class StrokePainter extends CustomPainter {
     this.paintBackground = true,
     this.paintStrokes = true,
     this.paintSinglePoint = true,
+    this.blendMode = BlendMode.srcOver,
     super.repaint,
   });
 
@@ -53,7 +55,8 @@ class StrokePainter extends CustomPainter {
       ..strokeWidth = stroke.width
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
-      ..style = PaintingStyle.stroke;
+      ..style = PaintingStyle.stroke
+      ..blendMode = blendMode;
     if (stroke.pressureSensitive) {
       _paintPressureStroke(canvas, stroke, paint);
       return;
@@ -154,6 +157,7 @@ class StrokePainter extends CustomPainter {
         paintBackground != old.paintBackground ||
         paintStrokes != old.paintStrokes ||
         paintSinglePoint != old.paintSinglePoint ||
+        blendMode != old.blendMode ||
         !identical(active, old.active) ||
         strokes.length != old.strokes.length) {
       return true;

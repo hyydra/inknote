@@ -193,7 +193,7 @@ class TextBlockFormat {
 }
 
 class Note {
-  static const int currentFormatVersion = 5;
+  static const int currentFormatVersion = 6;
 
   String id;
   String title;
@@ -202,6 +202,9 @@ class Note {
   int backgroundColor;
   String backgroundPattern;
   int pageCount;
+  int rasterWidth;
+  int rasterPageHeight;
+  Map<int, String> rasterPages;
   DateTime updated;
   List<Stroke> strokes;
   List<TaskItem> tasks;
@@ -215,10 +218,14 @@ class Note {
     this.backgroundColor = 0xfffffdf7,
     this.backgroundPattern = 'lined',
     this.pageCount = 1,
+    this.rasterWidth = 0,
+    this.rasterPageHeight = 0,
+    Map<int, String>? rasterPages,
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
   })  : textBlocks = textBlocks ?? (text.isEmpty ? <String>[] : <String>[text]),
+        rasterPages = rasterPages ?? <int, String>{},
         textBlockFormats = textBlockFormats ??
             List.generate(
               textBlocks?.length ?? (text.isEmpty ? 0 : 1),
@@ -258,6 +265,9 @@ class Note {
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
       pageCount: (value['pageCount'] as int? ?? 1).clamp(1, 10000),
+      rasterWidth: value['rasterWidth'] as int? ?? 0,
+      rasterPageHeight: value['rasterPageHeight'] as int? ?? 0,
+      rasterPages: _parseRasterPages(value['rasterPages']),
       updated: DateTime.parse(value['updated'] as String),
       strokes: (value['strokes'] as List? ?? const [])
           .map(
@@ -286,8 +296,30 @@ class Note {
         'backgroundColor': backgroundColor,
         'backgroundPattern': backgroundPattern,
         'pageCount': pageCount,
+        'rasterWidth': rasterWidth,
+        'rasterPageHeight': rasterPageHeight,
+        'rasterPages': {
+          for (final entry in rasterPages.entries)
+            entry.key.toString(): entry.value,
+        },
         'updated': updated.toIso8601String(),
         'strokes': strokes.map((stroke) => stroke.toJson()).toList(),
         'tasks': tasks.map((task) => task.toJson()).toList(),
       };
+}
+
+Map<int, String> _parseRasterPages(Object? rawPages) {
+  if (rawPages == null) return <int, String>{};
+  if (rawPages is! Map) {
+    throw const FormatException('Raster pages must be an object');
+  }
+  final pages = <int, String>{};
+  rawPages.forEach((key, value) {
+    final page = int.tryParse(key.toString());
+    if (page == null || page < 0 || value is! String) {
+      throw const FormatException('Invalid raster page entry');
+    }
+    pages[page] = value;
+  });
+  return pages;
 }

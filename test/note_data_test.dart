@@ -89,6 +89,34 @@ Future<void> main() async {
   );
   print('PASS continuous page count survives serialization');
 
+  final rasterNote = Note(
+    id: 'raster-note',
+    title: 'Raster page',
+    updated: DateTime.utc(2026, 11, 11),
+    strokes: [],
+    rasterWidth: 960,
+    rasterPageHeight: 1280,
+    rasterPages: const {0: 'first-page-png', 2: 'third-page-png'},
+  );
+  final rasterRoundTrip = Note.fromJson(rasterNote.toJson());
+  expectEqual(rasterRoundTrip.rasterWidth, 960, 'raster width survives');
+  expectEqual(
+    rasterRoundTrip.rasterPageHeight,
+    1280,
+    'raster page height survives',
+  );
+  expectEqual(
+    rasterRoundTrip.rasterPages[0],
+    'first-page-png',
+    'raster page zero survives serialization',
+  );
+  expectEqual(
+    rasterRoundTrip.rasterPages[2],
+    'third-page-png',
+    'sparse raster page indices survive serialization',
+  );
+  print('PASS raster pages survive serialization');
+
   final blurStroke = Stroke.fromJson(Stroke(
     points: const [CanvasPoint(10, 20), CanvasPoint(30, 40)],
     color: 0x00000000,

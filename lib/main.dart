@@ -17,6 +17,7 @@ import 'note_data.dart';
 import 'note_storage.dart';
 import 'note_store.dart';
 import 'pennino_theme.dart';
+import 'raster_drawing.dart';
 import 'rich_text_controller.dart';
 import 'text_block_controller.dart';
 import 'update_service.dart';
@@ -397,6 +398,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   Color highlighterColor = Colors.yellow;
   double width = 3;
   Stroke? active;
+  Stroke? activeEraser;
   Stroke? activePreview;
   final List<Stroke> activeStrokeChunks = [];
   bool showText = true;
@@ -407,13 +409,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool saveFailed = false;
   int _editRevision = 0;
   Future<void>? _saveOperation;
-  bool gestureHistoryRecorded = false;
   final Map<int, Offset> canvasPointerPositions = {};
   int? drawingPointer;
   Offset? lastSampleViewportPosition;
   double canvasViewportHeight = 0;
   double canvasPageHeight = 1200;
-  late final CanvasEditorController canvasEditor;
+  double canvasWidth = 2000;
+  late RasterDrawingStore rasterDrawing;
+  late Future<void> _rasterLoadOperation;
+  Future<void>? _rasterMigrationOperation;
+  bool rasterImagesLoaded = false;
+  bool isRasterizing = false;
+  Object? rasterImageError;
+  bool legacyRasterizationScheduled = false;
+  bool rasterMigrationOnlyDirty = false;
+  Future<void>? _strokeCommitOperation;
   final store = NoteStore(directoryProvider: noteDirectory);
   late final DriveSyncService syncService;
   late final DriveSyncDebouncer driveSyncDebouncer;
@@ -429,7 +439,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    canvasEditor = CanvasEditorController(widget.note);
+    rasterDrawing = RasterDrawingStore(
+      width: widget.note.rasterWidth,
+      pageHeight: widget.note.rasterPageHeight,
+    );
+    if (widget.note.rasterPageHeight > 0) {
+      canvasPageHeight = widget.note.rasterPageHeight.toDouble();
+    }
+    _rasterLoadOperation =
+        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
     syncService = DriveSyncService(
       store: store,
       backend: createPlatformSyncBackend(
@@ -467,6 +485,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     titleController.dispose();
     textBlockController.dispose();
     taskController.dispose();
+    rasterDrawing.dispose();
     transformationController.dispose();
     canvasRepaint.dispose();
     super.dispose();
@@ -477,15 +496,145 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _finalizeActiveStroke();
-      gestureHistoryRecorded = false;
+      unawaited(_finalizeActiveStroke());
     }
+  }
+
+  Future<void> _loadRasterPages(
+    RasterDrawingStore target,
+    Map<int, String> encodedPages,
+  ) async {
+    Object? error;
+    try {
+      await target.load(encodedPages);
+    } catch (loadError) {
+      error = loadError;
+    }
+    if (!mounted) {
+      target.dispose();
+      return;
+    }
+    if (!identical(target, rasterDrawing)) {
+      target.dispose();
+      return;
+    }
+    setState(() {
+      rasterImagesLoaded = true;
+      rasterImageError = error;
+    });
+    if (error != null) {
+      _showRasterError(error);
+    } else {
+      _scheduleLegacyRasterization();
+    }
+  }
+
+  void _showRasterError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not prepare the drawing: $error')),
+    );
+  }
+
+  void _scheduleLegacyRasterization() {
+    if (!rasterImagesLoaded ||
+        rasterImageError != null ||
+        widget.note.strokes.isEmpty ||
+        legacyRasterizationScheduled) {
+      return;
+    }
+    legacyRasterizationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => isRasterizing = true);
+      unawaited(_rasterizeLegacyStrokes());
+    });
+  }
+
+  Future<void> _rasterizeLegacyStrokes() async {
+    try {
+      await _ensureRasterized();
+    } catch (error) {
+      _showRasterError(error);
+    } finally {
+      if (mounted) setState(() => isRasterizing = false);
+    }
+  }
+
+  Future<void> _ensureRasterized() async {
+    await _rasterLoadOperation;
+    final loadError = rasterImageError;
+    if (loadError != null) {
+      throw StateError('The stored drawing could not be loaded: $loadError');
+    }
+    if (widget.note.strokes.isEmpty) return;
+    final activeMigration = _rasterMigrationOperation;
+    if (activeMigration != null) {
+      await activeMigration;
+      return;
+    }
+    final operation = _migrateLegacyStrokes();
+    _rasterMigrationOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_rasterMigrationOperation, operation)) {
+        _rasterMigrationOperation = null;
+      }
+    }
+  }
+
+  Future<void> _migrateLegacyStrokes() async {
+    final source = rasterDrawing;
+    final legacyStrokes = List<Stroke>.of(widget.note.strokes);
+    final migrationWidth = canvasWidth.ceil();
+    final migrationPageHeight = canvasPageHeight.ceil();
+    final migrationPageCount = widget.note.pageCount;
+    final encodedPages = await source.encode();
+    final migrated = RasterDrawingStore(
+      width: source.width,
+      pageHeight: source.pageHeight,
+    );
+    try {
+      await migrated.load(encodedPages);
+      await migrated.addStrokes(
+        legacyStrokes,
+        canvasWidth: migrationWidth,
+        canvasPageHeight: migrationPageHeight,
+        pageCount: migrationPageCount,
+      );
+    } catch (_) {
+      migrated.dispose();
+      rethrow;
+    }
+    if (!mounted || !identical(source, rasterDrawing)) {
+      migrated.dispose();
+      return;
+    }
+    setState(() {
+      rasterDrawing = migrated;
+      widget.note.strokes.removeRange(0, legacyStrokes.length);
+      widget.note.rasterWidth = rasterDrawing.width;
+      widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      source.dispose();
+    });
+    _markRasterMigrationDirty();
   }
 
   void _markChanged() {
     if (applyingExternalChange) return;
+    rasterMigrationOnlyDirty = false;
     _editRevision++;
     if (hasUnsavedChanges) return;
+    setState(() => hasUnsavedChanges = true);
+  }
+
+  void _markRasterMigrationDirty() {
+    if (isSaving || hasUnsavedChanges) return;
+    rasterMigrationOnlyDirty = true;
+    _editRevision++;
     setState(() => hasUnsavedChanges = true);
   }
 
@@ -748,18 +897,36 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void begin(PointerDownEvent event) {
-    if (tool == DrawTool.hand || tool == DrawTool.text) return;
-    final viewportPoint = event.localPosition;
-    gestureHistoryRecorded = false;
-    if (tool == DrawTool.eraser) {
-      erase(viewportPoint);
+    if (tool == DrawTool.hand ||
+        tool == DrawTool.text ||
+        isRasterizing ||
+        isSaving ||
+        active != null ||
+        activeEraser != null ||
+        !rasterImagesLoaded ||
+        rasterImageError != null) {
       return;
     }
+    final viewportPoint = event.localPosition;
     lastSampleViewportPosition = viewportPoint;
     final scenePoint = _scenePoint(event);
-    canvasEditor.recordHistory();
-    gestureHistoryRecorded = true;
+    if (tool == DrawTool.eraser) {
+      final eraserWidth = 36 / canvasTransform.scale;
+      setState(() {
+        active = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
+        activeEraser = Stroke(
+          points: [scenePoint],
+          color: Colors.black.toARGB32(),
+          width: eraserWidth,
+          highlight: false,
+        );
+      });
+      return;
+    }
     setState(() {
+      activeEraser = null;
       active = Stroke(
         points: [scenePoint],
         color: _activeStrokeColor.toARGB32(),
@@ -802,7 +969,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (index == null) return false;
     setState(() {
       active = null;
-      gestureHistoryRecorded = false;
+      activeEraser = null;
       activeTextIndex = index;
       tool = DrawTool.text;
     });
@@ -816,9 +983,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void move(PointerMoveEvent event) {
     if (tool == DrawTool.hand || tool == DrawTool.text) return;
-    final viewportPoint = event.localPosition;
     if (tool == DrawTool.eraser) {
-      erase(viewportPoint);
+      if (activeEraser != null) _appendStrokePoint(event);
       return;
     }
     if (active == null) return;
@@ -826,7 +992,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void _appendStrokePoint(PointerEvent event, {bool force = false}) {
-    final stroke = active;
+    final stroke = activeEraser ?? active;
     if (stroke == null) return;
     final point = _scenePoint(event);
     final previous = stroke.points.last;
@@ -844,6 +1010,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     stroke.points.add(point);
+    if (identical(stroke, activeEraser)) {
+      lastSampleViewportPosition = event.localPosition;
+      canvasRepaint.value++;
+      return;
+    }
     final preview = activePreview;
     if (!stroke.blur && preview != null) {
       preview.points.add(point);
@@ -870,7 +1041,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void end(PointerEvent event) {
     _appendStrokePoint(event, force: true);
-    _finalizeActiveStroke();
+    unawaited(_finalizeActiveStroke());
   }
 
   void _canvasPointerDown(PointerDownEvent event) {
@@ -885,12 +1056,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       return;
     }
     drawingPointer = null;
-    if (active != null) {
+    if (active != null || activeEraser != null) {
       setState(() {
         active = null;
+        activeEraser = null;
         activePreview = null;
         activeStrokeChunks.clear();
-        gestureHistoryRecorded = false;
         lastSampleViewportPosition = null;
       });
     }
@@ -959,7 +1130,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _refreshCanvasViewport({required bool userScrolledDown}) {
     var appendedPage = false;
     final transform = canvasTransform;
-    if (userScrolledDown && canvasViewportHeight > 0 && canvasPageHeight > 0) {
+    if (userScrolledDown &&
+        !isRasterizing &&
+        !isSaving &&
+        canvasViewportHeight > 0 &&
+        canvasPageHeight > 0) {
       final visibleBottom =
           (canvasViewportHeight - transform.translationY) / transform.scale;
       if (visibleBottom >= widget.note.pageCount * canvasPageHeight - 180) {
@@ -973,38 +1148,69 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
   }
 
-  void _finalizeActiveStroke() {
-    if (!commitActiveStroke(widget.note.strokes, active)) {
+  Future<void> _finalizeActiveStroke() {
+    final activeCommit = _strokeCommitOperation;
+    if (activeCommit != null) return activeCommit;
+    final operation = _commitActiveStroke();
+    _strokeCommitOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_strokeCommitOperation, operation)) {
+        _strokeCommitOperation = null;
+      }
+    });
+  }
+
+  Future<void> _commitActiveStroke() async {
+    final stroke = activeEraser ?? active;
+    if (stroke == null) {
       lastSampleViewportPosition = null;
       return;
     }
-    setState(() {
-      active = null;
-      activePreview = null;
-      activeStrokeChunks.clear();
-      gestureHistoryRecorded = false;
-      lastSampleViewportPosition = null;
-    });
-    _markChanged();
-  }
-
-  void erase(Offset viewportPoint) {
-    final result = eraseStrokesAtViewport(
-      widget.note.strokes,
-      CanvasPoint(viewportPoint.dx, viewportPoint.dy),
-      canvasTransform,
-      screenRadius: 18,
-    );
-    if (!result.$2) return;
-    if (!gestureHistoryRecorded) {
-      canvasEditor.recordHistory();
-      gestureHistoryRecorded = true;
+    final erasing = activeEraser != null;
+    setState(() => isRasterizing = true);
+    try {
+      await _ensureRasterized();
+      final changed = erasing
+          ? await rasterDrawing.eraseStroke(
+              stroke,
+              canvasWidth: canvasWidth.ceil(),
+              canvasPageHeight: canvasPageHeight.ceil(),
+              pageCount: widget.note.pageCount,
+            )
+          : true;
+      if (!erasing) {
+        await rasterDrawing.addStroke(
+          stroke,
+          canvasWidth: canvasWidth.ceil(),
+          canvasPageHeight: canvasPageHeight.ceil(),
+          pageCount: widget.note.pageCount,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        active = null;
+        activeEraser = null;
+        activePreview = null;
+        activeStrokeChunks.clear();
+        lastSampleViewportPosition = null;
+        isRasterizing = false;
+        widget.note.rasterWidth = rasterDrawing.width;
+        widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+      });
+      if (changed) _markChanged();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => isRasterizing = false);
+      _markChanged();
+      _showRasterError(error);
     }
-    setState(() => widget.note.strokes = result.$1);
-    _markChanged();
   }
 
   Future<void> _persist() async {
+    await _ensureRasterized();
+    if (active != null || activeEraser != null) {
+      throw StateError('The active drawing could not be flattened');
+    }
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
@@ -1030,6 +1236,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   .toList(),
             ))
         .toList();
+    widget.note.rasterPages = await rasterDrawing.encode();
+    widget.note.rasterWidth = rasterDrawing.width;
+    widget.note.rasterPageHeight = rasterDrawing.pageHeight;
+    widget.note.strokes.clear();
     widget.note.updated = DateTime.now();
     await store.save(widget.note);
     driveSyncDebouncer.schedule(currentNoteId: widget.note.id);
@@ -1039,7 +1249,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     syncService.syncInBackground(
       currentNoteId: widget.note.id,
       onResult: (result) {
-        if (!mounted || hasUnsavedChanges || isSaving) return;
+        if (!mounted ||
+            (hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
+            isSaving ||
+            isRasterizing ||
+            active != null ||
+            activeEraser != null) {
+          return;
+        }
         final syncedCurrent = result.currentNote;
         if (syncedCurrent != null &&
             syncedCurrent.updated.isAfter(widget.note.updated)) {
@@ -1060,7 +1277,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   Future<void> _performSave({required bool showMessage}) async {
-    _finalizeActiveStroke();
+    await _finalizeActiveStroke();
     final savingRevision = _editRevision;
     setState(() {
       isSaving = true;
@@ -1074,6 +1291,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         isSaving = false;
         saveFailed = false;
         hasUnsavedChanges = hasNewerChanges;
+        if (!hasNewerChanges) rasterMigrationOnlyDirty = false;
       });
       if (showMessage) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1102,7 +1320,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   Future<bool> _confirmSaveBeforeLeaving() async {
-    _finalizeActiveStroke();
+    await _finalizeActiveStroke();
     if (!hasUnsavedChanges) return true;
     if (isSaving) {
       await save(showMessage: false);
@@ -1175,6 +1393,20 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         orElse: () => PaperPattern.lined,
       ),
     ).paint(canvas, size);
+    final firstPage = rasterDrawing.pages[0];
+    if (firstPage != null) {
+      canvas.drawImageRect(
+        firstPage,
+        Rect.fromLTWH(
+          0,
+          0,
+          firstPage.width.toDouble(),
+          firstPage.height.toDouble(),
+        ),
+        Offset.zero & size,
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+    }
     final picture = recorder.endRecording();
     final image = await picture.toImage(
       size.width.toInt(),
@@ -1329,9 +1561,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _applySyncedNote(Note syncedCurrent) {
     if (identical(syncedCurrent, widget.note)) return;
+    final oldRasterDrawing = rasterDrawing;
+    final nextRasterDrawing = RasterDrawingStore(
+      width: syncedCurrent.rasterWidth,
+      pageHeight: syncedCurrent.rasterPageHeight,
+    );
     applyingExternalChange = true;
     try {
       setState(() {
+        rasterDrawing = nextRasterDrawing;
+        rasterImagesLoaded = false;
+        rasterImageError = null;
+        legacyRasterizationScheduled = false;
         widget.note.title = syncedCurrent.title;
         widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
         widget.note.textBlockFormats = syncedCurrent.textBlockFormats
@@ -1355,15 +1596,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ))
             .toList();
         widget.note.updated = syncedCurrent.updated;
-        widget.note.strokes = syncedCurrent.strokes;
+        widget.note.strokes = List.of(syncedCurrent.strokes);
         widget.note.tasks = syncedCurrent.tasks;
         widget.note.backgroundColor = syncedCurrent.backgroundColor;
         widget.note.backgroundPattern = syncedCurrent.backgroundPattern;
         widget.note.pageCount = syncedCurrent.pageCount;
+        widget.note.rasterWidth = syncedCurrent.rasterWidth;
+        widget.note.rasterPageHeight = syncedCurrent.rasterPageHeight;
+        widget.note.rasterPages = Map.of(syncedCurrent.rasterPages);
+        canvasWidth = math.max(2000.0, syncedCurrent.rasterWidth.toDouble());
+        if (syncedCurrent.rasterPageHeight > 0) {
+          canvasPageHeight = syncedCurrent.rasterPageHeight.toDouble();
+        }
         hasUnsavedChanges = false;
         saveFailed = false;
-        gestureHistoryRecorded = false;
-        canvasEditor.clearHistory();
+        rasterMigrationOnlyDirty = false;
         titleController.text = syncedCurrent.title;
         textBlockController.replace(
           syncedCurrent.textBlocks,
@@ -1373,6 +1620,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     } finally {
       applyingExternalChange = false;
     }
+    _rasterLoadOperation =
+        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldRasterDrawing.dispose();
+    });
   }
 
   Future<void> syncDrive({bool chooseFolder = false}) async {
@@ -1624,15 +1876,23 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _availableUpdateRow(UpdateInfo update) => Material(
-        key: const Key('available-update-row'),
-        color: Theme.of(context).colorScheme.secondaryContainer,
+  Widget _availableUpdateRow(UpdateInfo update) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      key: const Key('available-update-row'),
+      color: scheme.secondaryContainer,
+      child: DefaultTextStyle(
+        style: TextStyle(color: scheme.onSecondaryContainer),
         child: SizedBox(
           height: 44,
           child: Row(
             children: [
               const SizedBox(width: 12),
-              const Icon(Icons.system_update_outlined, size: 20),
+              Icon(
+                Icons.system_update_outlined,
+                size: 20,
+                color: scheme.onSecondaryContainer,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -1643,6 +1903,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               ),
               TextButton.icon(
                 onPressed: () => UpdateService.prompt(context),
+                style: TextButton.styleFrom(
+                  foregroundColor: scheme.onSecondaryContainer,
+                ),
                 icon: const Icon(Icons.download, size: 18),
                 label: const Text('Update'),
               ),
@@ -1650,7 +1913,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _canvasTextBlock(int index) {
     final format = textFormats[index];
@@ -1700,37 +1965,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
               contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _canvasTextBlockPreview(int index) {
-    final format = textFormats[index];
-    final baseStyle = TextStyle(
-      color: Color(format.color),
-      fontSize: format.fontSize,
-      fontWeight: format.bold ? FontWeight.bold : FontWeight.normal,
-    );
-    return Positioned(
-      left: format.x,
-      top: format.y,
-      width: format.width,
-      height: format.height,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 32, 8, 8),
-        child: ClipRect(
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: RichText(
-              text: textControllers[index].buildTextSpan(
-                context: context,
-                style: baseStyle,
-                withComposing: false,
-              ),
-              textScaler: MediaQuery.textScalerOf(context),
             ),
           ),
         ),
@@ -1953,10 +2187,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                           key: ValueKey(
                             'blur-strokes-$layerIndex-$index',
                           ),
-                          painter: StrokePainter(
-                            priorStrokes,
-                            null,
-                            paintBackground: false,
+                          painter: RasterDrawingPainter(
+                            pages: rasterDrawing.pages,
+                            pageHeight: canvasPageHeight.round(),
+                            legacyStrokes: priorStrokes,
                           ),
                         ),
                       ],
@@ -1964,25 +2198,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-            ),
-          ),
-        if (showText && textControllers.isNotEmpty)
-          ClipPath(
-            key: ValueKey('blur-sharp-text-$layerIndex'),
-            clipBehavior: Clip.antiAlias,
-            clipper: BlurStrokeClipper(
-              stroke,
-              widthScale: passes.first.$1,
-              reclip: identical(stroke, active) ? canvasRepaint : null,
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                for (var textIndex = 0;
-                    textIndex < textControllers.length;
-                    textIndex++)
-                  _canvasTextBlockPreview(textIndex),
-              ],
             ),
           ),
       ],
@@ -1995,60 +2210,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       ),
     );
   }
-
-  List<Widget> _strokeLayers() {
-    final layers = <Widget>[];
-    final priorStrokes = <Stroke>[];
-    var normalStrokes = <Stroke>[];
-    var normalStart = 0;
-    for (var index = 0; index < widget.note.strokes.length; index++) {
-      final stroke = widget.note.strokes[index];
-      if (!stroke.blur) {
-        if (normalStrokes.isEmpty) normalStart = index;
-        normalStrokes.add(stroke);
-        priorStrokes.add(stroke);
-        continue;
-      }
-      if (normalStrokes.isNotEmpty) {
-        layers.add(_normalStrokeLayer(normalStrokes, normalStart, index));
-        normalStrokes = <Stroke>[];
-      }
-      layers.add(
-        _blurStrokeLayer(
-          stroke,
-          priorStrokes: List<Stroke>.of(priorStrokes),
-          layerIndex: index,
-          key: ValueKey('blur-layer-$index'),
-        ),
-      );
-    }
-    if (normalStrokes.isNotEmpty) {
-      layers.add(
-        _normalStrokeLayer(
-          normalStrokes,
-          normalStart,
-          widget.note.strokes.length,
-        ),
-      );
-    }
-    return layers;
-  }
-
-  Widget _normalStrokeLayer(List<Stroke> strokes, int start, int end) =>
-      Positioned.fill(
-        key: ValueKey('stroke-layer-run-$start-$end'),
-        child: IgnorePointer(
-          child: RepaintBoundary(
-            child: CustomPaint(
-              painter: StrokePainter(
-                strokes,
-                null,
-                paintBackground: false,
-              ),
-            ),
-          ),
-        ),
-      );
 
   Future<void> _showOpenSourceNotice() async {
     await showDialog<void>(
@@ -2121,28 +2282,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             actions: [
-              IconButton(
-                tooltip: 'Undo',
-                onPressed: !canvasEditor.canUndo
-                    ? null
-                    : () {
-                        if (!canvasEditor.undo()) return;
-                        setState(() {});
-                        _markChanged();
-                      },
-                icon: const Icon(Icons.undo),
-              ),
-              IconButton(
-                tooltip: 'Redo',
-                onPressed: !canvasEditor.canRedo
-                    ? null
-                    : () {
-                        if (!canvasEditor.redo()) return;
-                        setState(() {});
-                        _markChanged();
-                      },
-                icon: const Icon(Icons.redo),
-              ),
               if (MediaQuery.sizeOf(context).width >= 700)
                 TextButton.icon(
                   onPressed: isSaving ? null : save,
@@ -2365,10 +2504,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final canvasWidth = math.max(2000.0, constraints.maxWidth);
+                    canvasWidth = math.max(
+                      math.max(2000.0, constraints.maxWidth),
+                      rasterDrawing.width.toDouble(),
+                    );
                     canvasViewportHeight = constraints.maxHeight;
-                    canvasPageHeight =
-                        math.max(1200.0, constraints.maxHeight * 1.5);
+                    canvasPageHeight = rasterDrawing.pageHeight > 0
+                        ? rasterDrawing.pageHeight.toDouble()
+                        : math.max(1200.0, constraints.maxHeight * 1.5);
+                    _scheduleLegacyRasterization();
                     final canvasHeight =
                         canvasPageHeight * widget.note.pageCount;
                     return ClipRect(
@@ -2420,21 +2564,24 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ),
-                                if (showText)
-                                  for (var index = 0;
-                                      index < textControllers.length;
-                                      index++)
-                                    _canvasTextBlock(index),
-                                ..._strokeLayers(),
-                                if (active != null && active!.blur)
-                                  _blurStrokeLayer(
-                                    active!,
-                                    priorStrokes: widget.note.strokes
-                                        .where((stroke) => !stroke.blur)
-                                        .toList(),
-                                    layerIndex: widget.note.strokes.length,
-                                    key: const Key('active-blur-layer'),
+                                Positioned.fill(
+                                  key: const Key('raster-drawing-layer'),
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: RasterDrawingPainter(
+                                        pages: rasterDrawing.pages,
+                                        pageHeight: canvasPageHeight.round(),
+                                        legacyStrokes: widget.note.strokes,
+                                        activePreview:
+                                            active == null || active!.blur
+                                                ? null
+                                                : activePreview,
+                                        activeEraser: activeEraser,
+                                        repaint: canvasRepaint,
+                                      ),
+                                    ),
                                   ),
+                                ),
                                 for (var index = 0;
                                     index < activeStrokeChunks.length;
                                     index++)
@@ -2452,20 +2599,29 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                       ),
                                     ),
                                   ),
-                                if (activePreview != null)
-                                  Positioned.fill(
-                                    key: const Key('active-stroke-layer'),
+                                if (active != null && active!.blur)
+                                  _blurStrokeLayer(
+                                    active!,
+                                    priorStrokes: widget.note.strokes
+                                        .where((stroke) => !stroke.blur)
+                                        .toList(),
+                                    layerIndex: widget.note.strokes.length,
+                                    key: const Key('active-blur-layer'),
+                                  ),
+                                if (!rasterImagesLoaded || isRasterizing)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: 2,
                                     child: IgnorePointer(
-                                      child: RepaintBoundary(
-                                        child: CustomPaint(
-                                          painter: StrokePainter(
-                                            [activePreview!],
-                                            null,
-                                            paintBackground: false,
-                                            paintSinglePoint:
-                                                activeStrokeChunks.isEmpty,
-                                            repaint: canvasRepaint,
-                                          ),
+                                      child: Semantics(
+                                        label: 'Preparing drawing',
+                                        liveRegion: true,
+                                        child: ColoredBox(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
                                         ),
                                       ),
                                     ),
@@ -2520,6 +2676,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ],
+                                if (showText)
+                                  for (var index = 0;
+                                      index < textControllers.length;
+                                      index++)
+                                    _canvasTextBlock(index),
                                 if (showText)
                                   for (var index = 0;
                                       index < textControllers.length;
