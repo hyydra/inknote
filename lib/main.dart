@@ -62,17 +62,14 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   }
 
   Future<void> _load() async {
-    final notes = await store.load();
-    final existing = notes.where((item) => item.id == launcherNoteId);
-    final loaded = existing.isEmpty
-        ? Note(
-            id: launcherNoteId,
-            title: 'Launcher note',
-            text: '',
-            updated: DateTime.now(),
-            strokes: [],
-          )
-        : existing.first;
+    final loaded = await store.loadNote(launcherNoteId) ??
+        Note(
+          id: launcherNoteId,
+          title: 'Launcher note',
+          text: '',
+          updated: DateTime.now(),
+          strokes: [],
+        );
     if (mounted) {
       setState(() => note = loaded);
     }
@@ -225,6 +222,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
+  final ValueNotifier<int> canvasRepaint = ValueNotifier(0);
   DrawTool tool = DrawTool.pen;
   Color strokeColor = Colors.blue.shade800;
   Color highlighterColor = Colors.yellow;
@@ -300,6 +298,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     textBlockController.dispose();
     taskController.dispose();
     transformationController.dispose();
+    canvasRepaint.dispose();
     super.dispose();
   }
 
@@ -651,7 +650,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
     if (active == null) return;
     final scenePoint = _scenePoint(event);
-    setState(() => active!.points.add(scenePoint));
+    active!.points.add(scenePoint);
+    canvasRepaint.value++;
   }
 
   void end() {
@@ -679,16 +679,19 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void _canvasPointerMove(PointerMoveEvent event) {
-    final previousPositions = Map<int, Offset>.from(canvasPointerPositions);
-    if (!canvasPointerPositions.containsKey(event.pointer)) return;
+    final previousPosition = canvasPointerPositions[event.pointer];
+    if (previousPosition == null) return;
     canvasPointerPositions[event.pointer] = event.localPosition;
     if (canvasPointerPositions.length >= 2) {
       final pointers = canvasPointerPositions.keys.take(2).toList();
       final first = pointers[0];
       final second = pointers[1];
-      final previousFirst = previousPositions[first];
-      final previousSecond = previousPositions[second];
-      if (previousFirst == null || previousSecond == null) return;
+      final previousFirst = first == event.pointer
+          ? previousPosition
+          : canvasPointerPositions[first]!;
+      final previousSecond = second == event.pointer
+          ? previousPosition
+          : canvasPointerPositions[second]!;
       final currentFirst = canvasPointerPositions[first]!;
       final currentSecond = canvasPointerPositions[second]!;
       final previousCenter = (previousFirst + previousSecond) / 2;
@@ -746,8 +749,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         appendedPage = true;
       }
     }
-    setState(() {});
-    if (appendedPage) _markChanged();
+    if (appendedPage) {
+      setState(() {});
+      _markChanged();
+    }
   }
 
   void _finalizeActiveStroke() {
@@ -1599,6 +1604,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   clipper: BlurStrokeClipper(
                     stroke,
                     widthScale: passes[index].$1,
+                    reclip: identical(stroke, active) ? canvasRepaint : null,
                   ),
                   child: Stack(
                     fit: StackFit.expand,
@@ -1646,6 +1652,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 clipper: BlurStrokeClipper(
                   stroke,
                   widthScale: passes.first.$1,
+                  reclip: identical(stroke, active) ? canvasRepaint : null,
                 ),
                 child: Stack(
                   fit: StackFit.expand,
@@ -2105,6 +2112,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                           [active!],
                                           null,
                                           paintBackground: false,
+                                          repaint: canvasRepaint,
                                         ),
                                       ),
                                     ),

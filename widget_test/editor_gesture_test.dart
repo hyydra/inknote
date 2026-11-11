@@ -22,6 +22,18 @@ Note noteWithStroke() => Note(
     );
 
 void main() {
+  test('stroke painters skip unchanged strokes', () {
+    final stroke = noteWithStroke().strokes.single;
+    final original = StrokePainter([stroke], null);
+
+    expect(StrokePainter([stroke], null).shouldRepaint(original), isFalse);
+    expect(
+      StrokePainter([noteWithStroke().strokes.single], null)
+          .shouldRepaint(original),
+      isTrue,
+    );
+  });
+
   testWidgets('a stationary tap creates an undoable stroke point',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
@@ -41,6 +53,32 @@ void main() {
       find.widgetWithIcon(IconButton, Icons.undo),
     );
     expect(undo.onPressed, isNotNull);
+  });
+
+  testWidgets('freehand moves update the active stroke', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = noteWithStroke();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final canvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(canvas);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(250, 250));
+    await gesture.moveTo(origin + const Offset(270, 270));
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(290, 280));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+
+    expect(note.strokes, hasLength(2));
+    expect(note.strokes.last.points, hasLength(3));
   });
 
   testWidgets('the highlighter starts in yellow', (tester) async {

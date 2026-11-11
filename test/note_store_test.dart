@@ -41,6 +41,16 @@ Future<void> main() async {
       'First version',
       'save retains the previous version',
     );
+    expectEqual(
+      (await store.loadNote('note-1'))?.title,
+      'Second version',
+      'a note can be loaded without scanning the library',
+    );
+    expectEqual(
+      await store.loadNote('missing-note'),
+      null,
+      'loading an unknown note returns null',
+    );
 
     print('PASS save publishes atomically and retains a backup');
 

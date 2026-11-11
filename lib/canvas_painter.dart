@@ -23,6 +23,7 @@ class StrokePainter extends CustomPainter {
     this.pattern = PaperPattern.lined,
     this.paintBackground = true,
     this.paintStrokes = true,
+    super.repaint,
   });
 
   draw_engine.Stroke _engineStroke(Stroke stroke) => draw_engine.Stroke(
@@ -50,6 +51,32 @@ class StrokePainter extends CustomPainter {
     final pressureFactor = 0.25 + point.normalizedPressure * 0.75;
     final tiltFactor = 1 + math.sin(point.tilt).abs() * 0.30;
     return baseWidth * pressureFactor * tiltFactor;
+  }
+
+  void _paintStroke(Canvas canvas, Stroke stroke) {
+    if (stroke.points.isEmpty || stroke.blur) return;
+    final engineStroke = _engineStroke(stroke);
+    final paint = Paint()
+      ..color = Color(stroke.color)
+          .withValues(alpha: stroke.highlight ? 0.32 : stroke.opacity)
+      ..strokeWidth = stroke.width
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+    if (stroke.pressureSensitive) {
+      _paintPressureStroke(canvas, engineStroke, paint);
+      return;
+    }
+    if (engineStroke.points.length == 1) {
+      canvas.drawPoints(
+        ui.PointMode.points,
+        [engineStroke.points.first.position],
+        paint,
+      );
+      return;
+    }
+    final path = draw_engine.PathBuilderMode.none.converter(engineStroke);
+    canvas.drawPath(path, paint);
   }
 
   void _paintPressureStroke(
@@ -104,43 +131,40 @@ class StrokePainter extends CustomPainter {
       }
     }
     if (paintStrokes) {
-      for (final stroke in [...strokes, if (active != null) active!]) {
-        if (stroke.points.isEmpty || stroke.blur) continue;
-        final engineStroke = _engineStroke(stroke);
-        final paint = Paint()
-          ..color = Color(stroke.color)
-              .withValues(alpha: stroke.highlight ? 0.32 : stroke.opacity)
-          ..strokeWidth = stroke.width
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke;
-        if (stroke.pressureSensitive) {
-          _paintPressureStroke(canvas, engineStroke, paint);
-          continue;
-        }
-        if (engineStroke.points.length == 1) {
-          canvas.drawPoints(
-            ui.PointMode.points,
-            [engineStroke.points.first.position],
-            paint,
-          );
-          continue;
-        }
-        final path = draw_engine.PathBuilderMode.none.converter(engineStroke);
-        canvas.drawPath(path, paint);
+      for (final stroke in strokes) {
+        _paintStroke(canvas, stroke);
       }
+      final activeStroke = active;
+      if (activeStroke != null) _paintStroke(canvas, activeStroke);
     }
   }
 
   @override
-  bool shouldRepaint(covariant StrokePainter old) => true;
+  bool shouldRepaint(covariant StrokePainter old) {
+    if (background != old.background ||
+        pattern != old.pattern ||
+        paintBackground != old.paintBackground ||
+        paintStrokes != old.paintStrokes ||
+        !identical(active, old.active) ||
+        strokes.length != old.strokes.length) {
+      return true;
+    }
+    for (var index = 0; index < strokes.length; index++) {
+      if (!identical(strokes[index], old.strokes[index])) return true;
+    }
+    return false;
+  }
 }
 
 class BlurStrokeClipper extends CustomClipper<Path> {
   final Stroke stroke;
   final double widthScale;
 
-  const BlurStrokeClipper(this.stroke, {this.widthScale = 1});
+  BlurStrokeClipper(
+    this.stroke, {
+    this.widthScale = 1,
+    super.reclip,
+  });
 
   @override
   Path getClip(Size size) {
@@ -174,5 +198,7 @@ class BlurStrokeClipper extends CustomClipper<Path> {
   }
 
   @override
-  bool shouldReclip(covariant BlurStrokeClipper oldClipper) => true;
+  bool shouldReclip(covariant BlurStrokeClipper oldClipper) =>
+      !identical(stroke, oldClipper.stroke) ||
+      widthScale != oldClipper.widthScale;
 }
