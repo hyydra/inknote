@@ -1785,6 +1785,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _toolbarIconFrame(Widget child) {
     final scheme = Theme.of(context).colorScheme;
+    final side = MediaQuery.sizeOf(context).width < 360 ? 40.0 : 48.0;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHigh,
@@ -1792,8 +1793,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(7),
       ),
       child: SizedBox(
-        width: 48,
-        height: 48,
+        width: side,
+        height: side,
         child: child,
       ),
     );

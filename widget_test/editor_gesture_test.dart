@@ -452,6 +452,30 @@ void main() {
     );
   });
 
+  testWidgets('both toolbars stay on screen at 320 pixels wide',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Text'));
+    await tester.pump();
+
+    final textToolbar = find.byKey(const Key('text-toolbar'));
+    final drawingToolbar = find.byKey(const Key('android-drawing-toolbar'));
+    expect(textToolbar, findsOneWidget);
+    expect(drawingToolbar, findsOneWidget);
+    expect(tester.takeException(), isNull);
+    expect(tester.getTopLeft(textToolbar).dx, greaterThanOrEqualTo(0));
+    expect(tester.getTopRight(textToolbar).dx, lessThanOrEqualTo(320));
+    expect(tester.getTopRight(drawingToolbar).dx, lessThanOrEqualTo(320));
+  });
+
   testWidgets('two fingers navigate without a separate Hand tool',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
