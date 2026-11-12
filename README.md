@@ -13,7 +13,6 @@ Android and Windows are supported release platforms. Linux support is experiment
 ## Download
 
 - [Windows installer](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows-Setup.exe) — recommended; includes Start menu and uninstall support.
-- [Windows portable ZIP](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Windows.zip) — extract and run without installation.
 - [Android APK](https://github.com/hyydra/pennino/releases/latest/download/Pennino-Android.apk) — universal APK for compatible phones and tablets.
 - [All releases and release notes](https://github.com/hyydra/pennino/releases)
 
@@ -56,7 +55,6 @@ To show a note on the Android home screen: open the note, choose **Update home w
 Pushing a version tag such as `v0.4.12` builds and publishes two assets:
 
 - `Pennino-Android.apk`: a universal APK for compatible Android phones and tablets.
-- `Pennino-Windows.zip`: the portable Windows application.
 - `Pennino-Windows-Setup.exe`: a per-user Windows installer with Start menu and optional desktop shortcuts plus uninstall support.
 
 Android releases require the four repository secrets documented in the release workflow: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Keep the original keystore backed up permanently; Android updates must use the same signing key.
