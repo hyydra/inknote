@@ -97,6 +97,7 @@ Future<void> main() async {
     rasterWidth: 960,
     rasterPageHeight: 1280,
     rasterPages: const {0: 'first-page-png', 2: 'third-page-png'},
+    rasterTiles: const {'0:0:0': 'first-tile-png', '2:1:1': 'later-tile-png'},
   );
   final rasterRoundTrip = Note.fromJson(rasterNote.toJson());
   expectEqual(rasterRoundTrip.rasterWidth, 960, 'raster width survives');
@@ -114,6 +115,16 @@ Future<void> main() async {
     rasterRoundTrip.rasterPages[2],
     'third-page-png',
     'sparse raster page indices survive serialization',
+  );
+  expectEqual(
+    rasterRoundTrip.rasterTiles['0:0:0'],
+    'first-tile-png',
+    'raster tile survives serialization',
+  );
+  expectEqual(
+    rasterRoundTrip.rasterTiles['2:1:1'],
+    'later-tile-png',
+    'sparse raster tile indices survive serialization',
   );
   print('PASS raster pages survive serialization');
 
