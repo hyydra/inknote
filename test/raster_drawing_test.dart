@@ -79,6 +79,47 @@ void main() {
     }
   });
 
+  test('eraser feathers the mark instead of cutting a hard edge', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStrokes(
+        [line(50)],
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+      expect(await alphaAtStore(store, 0, 50, 50), 255);
+
+      await store.eraseStroke(
+        Stroke(
+          points: const [CanvasPoint(50, 50)],
+          color: 0xff000000,
+          width: 14,
+          highlight: false,
+        ),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+
+      // Distances from the brush centre: 0, 8, 14 and 20 logical pixels.
+      // A hard edge leaves everything past its radius fully opaque, so the
+      // 8px and 14px probes would both read 255 and no gradient could exist.
+      final core = await alphaAtStore(store, 0, 50, 50);
+      final mid = await alphaAtStore(store, 0, 58, 50);
+      final outer = await alphaAtStore(store, 0, 64, 50);
+      final beyond = await alphaAtStore(store, 0, 70, 50);
+
+      expect(core, 0);
+      expect(mid, greaterThan(0));
+      expect(mid, lessThan(outer));
+      expect(outer, lessThan(255));
+      expect(beyond, 255);
+    } finally {
+      store.dispose();
+    }
+  });
+
   test('blur strokes bake a softened mark into the page image', () async {
     final store = RasterDrawingStore();
     try {
