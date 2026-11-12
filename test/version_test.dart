@@ -62,4 +62,16 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('update attempts use separate temporary directories', () async {
+    final directory = await Directory.systemTemp.createTemp('update-target-');
+    addTearDown(() => directory.delete(recursive: true));
+
+    final first = await UpdateService.createDownloadDirectory(directory);
+    final second = await UpdateService.createDownloadDirectory(directory);
+
+    expect(first.path, isNot(second.path));
+    expect(first.parent.path, directory.path);
+    expect(second.parent.path, directory.path);
+  });
 }
