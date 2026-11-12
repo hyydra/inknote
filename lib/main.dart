@@ -67,7 +67,7 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
           id: launcherNoteId,
           title: 'Launcher note',
           text: '',
-          updated: DateTime.now(),
+          updated: DateTime.now().toUtc(),
           strokes: [],
         );
     if (mounted) {
@@ -132,7 +132,7 @@ class _LibraryPageState extends State<LibraryPage> {
           id: const Uuid().v4(),
           title: 'Untitled note',
           text: '',
-          updated: DateTime.now(),
+          updated: DateTime.now().toUtc(),
           strokes: [],
         );
     await Navigator.push(
@@ -1263,7 +1263,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.rasterWidth = rasterDrawing.width;
     widget.note.rasterPageHeight = rasterDrawing.pageHeight;
     widget.note.strokes.clear();
-    widget.note.updated = DateTime.now();
+    widget.note.updated = DateTime.now().toUtc();
     await store.save(widget.note);
     driveSyncDebouncer.schedule(currentNoteId: widget.note.id);
   }

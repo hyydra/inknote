@@ -100,6 +100,36 @@ void main() {
     expect(stored['drive-only']?.title, 'Drive only');
   });
 
+  test('a Drive note from another timezone is compared as an instant',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    // Written on a UTC+9 device: the wall clock reads 22:29 but the instant is
+    // 13:29Z, which is older than the local 14:30Z edit below.
+    await store.save(
+      note('shared', 'Other device edit', DateTime.utc(2026, 11, 12, 13, 29)),
+    );
+    final remoteText = jsonEncode(
+      note('shared', 'Other device edit', DateTime.utc(2026, 11, 12, 13, 29))
+          .toJson(),
+    );
+    expect(remoteText, contains('2026-11-12T13:29:00.000Z'),
+        reason: 'serialized stamps must carry their offset');
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {'shared.json': remoteText};
+    await store.save(
+      note('shared', 'Local newer', DateTime.utc(2026, 11, 12, 14, 30)),
+    );
+    final service = DriveSyncService(store: store, backend: backend);
+
+    final result = await service.sync(currentNoteId: 'shared');
+    expect(result?.currentNote?.title, 'Local newer',
+        reason: 'the genuinely newer local edit must win');
+    expect(backend.files['shared.json'], contains('Local newer'));
+  });
+
   test('automatic sync does not ask for a folder', () async {
     final directory = await Directory.systemTemp.createTemp('drive-sync-');
     addTearDown(() => directory.delete(recursive: true));
