@@ -2,14 +2,15 @@
 
 ## Current state
 
-- Latest published release: v0.4.21, with Android APK and Windows installer.
-- Working branch: `main` after PR #31. PR #32 (feathered eraser, widget preview text) is open and unmerged.
-- Release commit: `38075fe` (`v0.4.21`); the previous release was `010b2b5` (`v0.4.20`).
+- Latest published release: v0.4.22, with Android APK and Windows installer.
+- Working branch: `main` after PR #34. PRs #32 (feathered eraser, widget preview text), #33 (v0.4.21 record) and #34 (version bump) are merged.
+- Release commit: `bb610a5` (`v0.4.22`); the previous release was `38075fe` (`v0.4.21`).
 - Raster drawing migration, editor controls and tiled raster storage are included in the published v0.4.18 release.
-- Sync and save fixes (UTC timestamps, changed-notes-only upload, save before suspend or update) merged through PR #25 (`7aa0a54`) shipped in v0.4.19 and are still live in v0.4.20. The earlier `v0.4.18` tag was re-created at `7cf2ee6` after the post-merge workflow passed, which is why the previous notes here said the tag had been removed.
+- Sync and save fixes (UTC timestamps, changed-notes-only upload, save before suspend or update) merged through PR #25 (`7aa0a54`) shipped in v0.4.19 and are still live. The earlier `v0.4.18` tag was re-created at `7cf2ee6` after the post-merge workflow passed, which is why the previous notes here said the tag had been removed.
 - Glyph-precise text activation (a text block opens only when the tap lands on its text; the rest of the block draws) merged through PR #28 (`010b2b5`) shipped in v0.4.20.
 - One global text document per note, edited in a fixed column at the top of the page, merged through PR #30 (`7f002e2`) and shipped in v0.4.21. Legacy blocks fold into the document on save; the stored format version stayed 7.
-- The home-screen widget pinned typed notes as blank paper because `renderPreview` never painted text; that and the hard-edged eraser are fixed in PR #32, not yet released.
+- The home-screen widget pinned typed notes as blank paper because `renderPreview` never painted text; that and the hard-edged eraser were fixed in PR #32 (`784b600`) and shipped in v0.4.22. The eraser now feathers through the same ramp as blur, live and baked.
+- Main protects with `strict: true` and required contexts `android`, `linux`, `windows`: merging one PR stales the next, so update its branch with main and re-gate CI before merging.
 - The local post-merge builds in `artifacts/local-build-2026-11-11/` were built as v0.4.17 and are not the release assets.
 
 ## Task log
@@ -23,4 +24,5 @@
 - [Publish v0.4.19](./handoff/2026-11-12-publish-v0-4-19.md) — complete; published from `badb332`.
 - [Publish v0.4.20](./handoff/2026-11-12-publish-v0-4-20.md) — complete; published from `010b2b5`.
 - [Publish v0.4.21](./handoff/2026-11-12-publish-v0-4-21.md) — complete; published from `38075fe`.
+- [Publish v0.4.22](./handoff/2026-11-13-publish-v0-4-22.md) — complete; published from `bb610a5`.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
