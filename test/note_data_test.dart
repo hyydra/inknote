@@ -33,55 +33,200 @@ Future<void> main() async {
 
   print('PASS legacy JSON migrates to the current format');
 
-  final blocks = Note(
-    id: 'blocks-note',
-    title: 'Separate blocks',
-    textBlocks: const ['First block', 'Second block'],
-    updated: DateTime.utc(2026, 11, 10),
+  final migratedBlocks = Note.fromJson({
+    'id': 'blocks-note',
+    'title': 'Migrated',
+    'text': 'First block\n\nSecond block',
+    'textBlocks': ['First block', 'Second block'],
+    'textBlockFormats': [
+      {
+        'bold': true,
+        'color': 0xff112233,
+        'fontSize': 24.0,
+        'styles': <Object?>[],
+      },
+      {
+        'bold': false,
+        'color': 0xff000000,
+        'fontSize': 20.0,
+        'styles': <Object?>[],
+      },
+    ],
+    'updated': '2026-11-01T10:00:00.000Z',
+    'strokes': <Object?>[],
+  });
+  expectEqual(
+    migratedBlocks.text,
+    'First block\n\nSecond block',
+    'legacy blocks concatenate into one document in order',
+  );
+  expectEqual(
+    migratedBlocks.textFormat.bold,
+    true,
+    'the first block sets the document default bold',
+  );
+  expectEqual(
+    migratedBlocks.textFormat.color,
+    0xff112233,
+    'the first block sets the document default colour',
+  );
+  expectEqual(
+    migratedBlocks.textFormat.fontSize,
+    24.0,
+    'the first block sets the document default size',
+  );
+  // 'First block' is 11 characters, then the two-character separator.
+  final movedStyle = migratedBlocks.textFormat.styles.single;
+  expectEqual(
+      movedStyle.start, 13, 'the differing block starts after block one');
+  expectEqual(
+      movedStyle.end, 25, 'the differing block ends at its document offset');
+  expectEqual(movedStyle.bold, false, 'the moved range carries the block bold');
+  expectEqual(
+    movedStyle.color,
+    0xff000000,
+    'the moved range carries the block colour',
+  );
+  expectEqual(
+      movedStyle.fontSize, 20.0, 'the moved range carries the block size');
+  print('PASS legacy text blocks concatenate into one document');
+
+  final richMigrated = Note.fromJson({
+    'id': 'rich-note',
+    'title': 'Rich',
+    'textBlocks': ['Hello', 'World'],
+    'textBlockFormats': [
+      {
+        'bold': false,
+        'color': 0xff000000,
+        'fontSize': 20.0,
+        'styles': [
+          {
+            'start': 0,
+            'end': 5,
+            'bold': true,
+            'color': 0xffd7a842,
+            'fontSize': 30.0,
+          },
+        ],
+      },
+      {
+        'bold': false,
+        'color': 0xff000000,
+        'fontSize': 20.0,
+        'styles': <Object?>[],
+      },
+    ],
+    'updated': '2026-11-01T10:00:00.000Z',
+    'strokes': <Object?>[],
+  });
+  final richStyle = richMigrated.textFormat.styles.single;
+  expectEqual(richStyle.start, 0, 'a first-block style needs no shift');
+  expectEqual(richStyle.end, 5, 'a first-block style keeps its end');
+  expectEqual(richStyle.bold, true, 'a first-block style keeps its bold');
+  expectEqual(
+      richStyle.fontSize, 30.0, 'a first-block style keeps its size');
+  final shifted = Note.fromJson({
+    'id': 'shift-note',
+    'title': 'Shift',
+    'textBlocks': ['Hello', 'World'],
+    'textBlockFormats': [
+      {'bold': false, 'color': 0xff000000, 'fontSize': 20.0},
+      {
+        'bold': false,
+        'color': 0xff000000,
+        'fontSize': 20.0,
+        'styles': [
+          {'start': 0, 'end': 5, 'bold': true},
+        ],
+      },
+    ],
+    'updated': '2026-11-01T10:00:00.000Z',
+    'strokes': <Object?>[],
+  });
+  expectEqual(
+    shifted.textFormat.styles.single.start,
+    7,
+    'a later block style shifts by the earlier block plus the separator',
+  );
+  expectEqual(
+    shifted.textFormat.styles.single.end,
+    12,
+    'a later block style end shifts by the same amount',
+  );
+  print('PASS legacy block styles shift to document offsets');
+
+  final document = Note(
+    id: 'document-note',
+    title: 'Written once',
+    text: 'Only text',
+    textFormat: TextDocumentFormat(
+      bold: true,
+      color: 0xff112233,
+      fontSize: 22,
+      styles: [TextStyleRange(start: 0, end: 4, bold: false)],
+    ),
+    updated: DateTime.utc(2026, 11, 12),
     strokes: [],
   );
-  final blocksRoundTrip = Note.fromJson(blocks.toJson());
+  final documentJson = document.toJson();
   expectEqual(
-    blocksRoundTrip.textBlocks.join('|'),
-    'First block|Second block',
-    'multiple text blocks survive serialization',
+    documentJson.containsKey('textBlocks'),
+    false,
+    'a saved note writes no block array',
   );
-  blocksRoundTrip.textBlockFormats.first
-    ..x = 123
-    ..y = 234
-    ..width = 456
-    ..height = 178
-    ..fontSize = 24
-    ..styles.add(TextStyleRange(
-      start: 0,
-      end: 5,
-      bold: true,
-      color: 0xffd7a842,
-      fontSize: 30,
-    ));
-  final positionedRoundTrip = Note.fromJson(blocksRoundTrip.toJson());
-  expectEqual(positionedRoundTrip.textBlockFormats.first.x, 123.0,
-      'text block x position survives serialization');
-  expectEqual(positionedRoundTrip.textBlockFormats.first.y, 234.0,
-      'text block y position survives serialization');
-  expectEqual(positionedRoundTrip.textBlockFormats.first.width, 456.0,
-      'text block width survives serialization');
-  expectEqual(positionedRoundTrip.textBlockFormats.first.height, 178.0,
-      'text block height survives serialization');
-  expectEqual(positionedRoundTrip.textBlockFormats.first.fontSize, 24.0,
-      'text block font size survives serialization');
-  final richStyle = positionedRoundTrip.textBlockFormats.first.styles.single;
-  expectEqual(richStyle.start, 0, 'rich text start survives serialization');
-  expectEqual(richStyle.end, 5, 'rich text end survives serialization');
-  expectEqual(richStyle.bold, true, 'rich text bold survives serialization');
   expectEqual(
-      richStyle.color, 0xffd7a842, 'rich text colour survives serialization');
+    documentJson.containsKey('textBlockFormats'),
+    false,
+    'a saved note writes no block format array',
+  );
   expectEqual(
-      richStyle.fontSize, 30.0, 'rich text size survives serialization');
-  print('PASS multiple text blocks survive serialization');
+    documentJson['formatVersion'],
+    7,
+    'the document shape is written under the current format version',
+  );
+  final documentRoundTrip = Note.fromJson(documentJson);
+  expectEqual(
+      documentRoundTrip.text, 'Only text', 'the document text survives');
+  expectEqual(documentRoundTrip.textFormat.bold, true,
+      'the document default bold survives');
+  expectEqual(documentRoundTrip.textFormat.color, 0xff112233,
+      'the document default colour survives');
+  expectEqual(documentRoundTrip.textFormat.fontSize, 22.0,
+      'the document default size survives');
+  expectEqual(documentRoundTrip.textFormat.styles.single.start, 0,
+      'a document style range keeps its start');
+  expectEqual(documentRoundTrip.textFormat.styles.single.end, 4,
+      'a document style range keeps its end');
+  expectEqual(documentRoundTrip.textFormat.styles.single.bold, false,
+      'a document style range keeps its bold');
+  print('PASS one document round-trips without block arrays');
 
-  blocks.pageCount = 3;
-  final pagedRoundTrip = Note.fromJson(blocks.toJson());
+  final resaved = Note.fromJson(
+    Note.fromJson({
+      'id': 'resave-note',
+      'title': 'Resaved',
+      'textBlocks': ['First', 'Second'],
+      'textBlockFormats': [
+        {'bold': false, 'color': 0xff000000, 'fontSize': 20.0},
+        {'bold': true, 'color': 0xff000000, 'fontSize': 20.0},
+      ],
+      'updated': '2026-11-01T10:00:00.000Z',
+      'strokes': <Object?>[],
+    }).toJson(),
+  );
+  expectEqual(resaved.text, 'First\n\nSecond',
+      'a migrated note re-reads to the same document');
+  expectEqual(resaved.textFormat.bold, false,
+      'a migrated note re-reads the same document default');
+  expectEqual(resaved.textFormat.styles.single.start, 7,
+      'a migrated note re-reads the same style offset');
+  expectEqual(resaved.textFormat.styles.single.bold, true,
+      'a migrated note re-reads the same style bold');
+  print('PASS a migrated note saves once and reads identically');
+
+  document.pageCount = 3;
+  final pagedRoundTrip = Note.fromJson(document.toJson());
   expectEqual(
     pagedRoundTrip.pageCount,
     3,
@@ -165,6 +310,24 @@ Future<void> main() async {
   expectEqual(pressureStroke.points.single.orientation, 1.25,
       'stylus orientation survives serialization');
   print('PASS stylus dynamics survive serialization');
+
+  final zoneStamped = Note(
+    id: 'zone-note',
+    title: 'Stamped in the local zone',
+    updated: DateTime.utc(2026, 11, 12, 13, 29).toLocal(),
+    strokes: [],
+  );
+  expectEqual(
+    zoneStamped.toJson()['updated'],
+    '2026-11-12T13:29:00.000Z',
+    'update stamps serialize as UTC instants, not bare local clock time',
+  );
+  expectEqual(
+    Note.fromJson(zoneStamped.toJson()).updated.millisecondsSinceEpoch,
+    zoneStamped.updated.millisecondsSinceEpoch,
+    'a UTC-stamped note round-trips to the same instant',
+  );
+  print('PASS update timestamps are zone-safe instants');
 
   var rejectedFutureVersion = false;
   try {

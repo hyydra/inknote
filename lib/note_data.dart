@@ -192,13 +192,63 @@ class TextBlockFormat {
       };
 }
 
+/// The style of a note's single text document. There is no position or size:
+/// the document is a fixed column at the top of page 1 that grows downward.
+class TextDocumentFormat {
+  bool bold;
+  int color;
+  double fontSize;
+  List<TextStyleRange> styles;
+
+  TextDocumentFormat({
+    this.bold = false,
+    this.color = 0xff000000,
+    this.fontSize = 20,
+    List<TextStyleRange>? styles,
+  }) : styles = styles ?? [];
+
+  factory TextDocumentFormat.fromJson(Map<String, dynamic> value) =>
+      TextDocumentFormat(
+        bold: value['bold'] as bool? ?? false,
+        color: value['color'] as int? ?? 0xff000000,
+        fontSize: (value['fontSize'] as num?)?.toDouble() ?? 20,
+        styles: (value['styles'] as List? ?? const [])
+            .map((item) => TextStyleRange.fromJson(
+                  Map<String, dynamic>.from(item as Map),
+                ))
+            .toList(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'bold': bold,
+        'color': color,
+        'fontSize': fontSize,
+        'styles': styles.map((style) => style.toJson()).toList(),
+      };
+
+  TextDocumentFormat copy() => TextDocumentFormat(
+        bold: bold,
+        color: color,
+        fontSize: fontSize,
+        styles: styles
+            .map((style) => TextStyleRange(
+                  start: style.start,
+                  end: style.end,
+                  bold: style.bold,
+                  color: style.color,
+                  fontSize: style.fontSize,
+                ))
+            .toList(),
+      );
+}
+
 class Note {
   static const int currentFormatVersion = 7;
 
   String id;
   String title;
-  List<String> textBlocks;
-  List<TextBlockFormat> textBlockFormats;
+  String text;
+  TextDocumentFormat textFormat;
   int backgroundColor;
   String backgroundPattern;
   int pageCount;
@@ -213,9 +263,8 @@ class Note {
   Note({
     required this.id,
     required this.title,
-    String text = '',
-    List<String>? textBlocks,
-    List<TextBlockFormat>? textBlockFormats,
+    this.text = '',
+    TextDocumentFormat? textFormat,
     this.backgroundColor = 0xfffffdf7,
     this.backgroundPattern = 'lined',
     this.pageCount = 1,
@@ -226,45 +275,34 @@ class Note {
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
-  })  : textBlocks = textBlocks ?? (text.isEmpty ? <String>[] : <String>[text]),
+  })  : textFormat = textFormat ?? TextDocumentFormat(),
         rasterPages = rasterPages ?? <int, String>{},
         rasterTiles = rasterTiles ?? <String, String>{},
-        textBlockFormats = textBlockFormats ??
-            List.generate(
-              textBlocks?.length ?? (text.isEmpty ? 0 : 1),
-              (index) => TextBlockFormat(y: 48 + index * 184),
-            ),
         tasks = tasks ?? [];
-
-  String get text => textBlocks.join('\n\n');
-
-  set text(String value) {
-    textBlocks = value.isEmpty ? <String>[] : <String>[value];
-    textBlockFormats = value.isEmpty
-        ? <TextBlockFormat>[]
-        : <TextBlockFormat>[TextBlockFormat()];
-  }
 
   factory Note.fromJson(Map<String, dynamic> value) {
     final formatVersion = value['formatVersion'] as int? ?? 0;
     if (formatVersion > currentFormatVersion) {
       throw FormatException('Unsupported note format version $formatVersion');
     }
+    final document = _documentFromBlocks(
+      (value['textBlocks'] as List?)
+              ?.map((block) => block as String)
+              .toList() ??
+          const <String>[],
+      value['textBlockFormats'] as List?,
+    );
 
     return Note(
       id: value['id'] as String,
       title: value['title'] as String,
-      text: value['text'] as String? ?? '',
-      textBlocks: (value['textBlocks'] as List?)
-          ?.map((block) => block as String)
-          .toList(),
-      textBlockFormats:
-          (value['textBlockFormats'] as List?)?.asMap().entries.map((entry) {
-        final raw = Map<String, dynamic>.from(entry.value as Map);
-        final format = TextBlockFormat.fromJson(raw);
-        if (!raw.containsKey('y')) format.y = 48 + entry.key * 184;
-        return format;
-      }).toList(),
+      text: document?.$1 ?? value['text'] as String? ?? '',
+      textFormat: document?.$2 ??
+          (value['textFormat'] == null
+              ? TextDocumentFormat()
+              : TextDocumentFormat.fromJson(
+                  Map<String, dynamic>.from(value['textFormat'] as Map),
+                )),
       backgroundColor: value['backgroundColor'] as int? ?? 0xfffffdf7,
       backgroundPattern: value['backgroundPattern'] as String? ?? 'lined',
       pageCount: (value['pageCount'] as int? ?? 1).clamp(1, 10000),
@@ -292,11 +330,7 @@ class Note {
         'id': id,
         'title': title,
         'text': text,
-        'textBlocks': textBlocks,
-        'textBlockFormats': textBlockFormats
-            .take(textBlocks.length)
-            .map((format) => format.toJson())
-            .toList(),
+        'textFormat': textFormat.toJson(),
         'backgroundColor': backgroundColor,
         'backgroundPattern': backgroundPattern,
         'pageCount': pageCount,
@@ -307,10 +341,61 @@ class Note {
             entry.key.toString(): entry.value,
         },
         'rasterTiles': rasterTiles,
-        'updated': updated.toIso8601String(),
+        'updated': updated.toUtc().toIso8601String(),
         'strokes': strokes.map((stroke) => stroke.toJson()).toList(),
         'tasks': tasks.map((task) => task.toJson()).toList(),
       };
+}
+
+/// Folds a legacy note's blocks into one document, or returns null when the
+/// file is already document-shaped. Offsets shift by every earlier block plus
+/// the two-character separator that joined them.
+(String, TextDocumentFormat)? _documentFromBlocks(
+  List<String> blocks,
+  List? rawFormats,
+) {
+  if (blocks.isEmpty) return null;
+  final formats = List<TextBlockFormat>.generate(blocks.length, (index) {
+    if (rawFormats == null || index >= rawFormats.length) {
+      return TextBlockFormat();
+    }
+    return TextBlockFormat.fromJson(
+      Map<String, dynamic>.from(rawFormats[index] as Map),
+    );
+  });
+  final document = TextDocumentFormat(
+    bold: formats.first.bold,
+    color: formats.first.color,
+    fontSize: formats.first.fontSize,
+  );
+  var offset = 0;
+  for (var index = 0; index < blocks.length; index++) {
+    final block = blocks[index];
+    final format = formats[index];
+    if (block.isNotEmpty &&
+        (format.bold != document.bold ||
+            format.color != document.color ||
+            format.fontSize != document.fontSize)) {
+      document.styles.add(TextStyleRange(
+        start: offset,
+        end: offset + block.length,
+        bold: format.bold,
+        color: format.color,
+        fontSize: format.fontSize,
+      ));
+    }
+    for (final style in format.styles) {
+      document.styles.add(TextStyleRange(
+        start: offset + style.start,
+        end: offset + style.end,
+        bold: style.bold,
+        color: style.color,
+        fontSize: style.fontSize,
+      ));
+    }
+    offset += block.length + 2;
+  }
+  return (blocks.join('\n\n'), document);
 }
 
 Map<String, String> _parseRasterTiles(Object? rawTiles) {

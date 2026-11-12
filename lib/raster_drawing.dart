@@ -336,19 +336,32 @@ class RasterDrawingStore {
     final canvas = Canvas(recorder, localBounds);
     if (previous != null) canvas.drawImage(previous, Offset.zero, Paint());
 
-    final clearBounds = _strokeBounds(localStroke).intersect(localBounds);
-    if (clearBounds.isEmpty) {
+    final featherBounds = _strokeBounds(localStroke)
+        .inflate(stroke.width * 0.6 + 1)
+        .intersect(localBounds);
+    if (featherBounds.isEmpty) {
       recorder.endRecording().dispose();
       return;
     }
-    canvas.saveLayer(clearBounds, Paint()..blendMode = BlendMode.src);
-    if (previous != null) canvas.drawImage(previous, Offset.zero, Paint());
-    StrokePainter(
-      [localStroke],
-      null,
-      paintBackground: false,
-      blendMode: BlendMode.clear,
-    ).paint(canvas, localBounds.size);
+    // Accumulate the ramp into one layer, then subtract it from the tile:
+    // remaining alpha is the product of (1 - opacity), the same fade the live
+    // paper overlay shows.
+    canvas.saveLayer(featherBounds, Paint()..blendMode = BlendMode.dstOut);
+    for (final pass in strokeFeatherPasses) {
+      StrokePainter(
+        [
+          Stroke(
+            points: localStroke.points,
+            color: localStroke.color,
+            width: localStroke.width * pass.$1,
+            highlight: false,
+            opacity: pass.$2,
+          ),
+        ],
+        null,
+        paintBackground: false,
+      ).paint(canvas, localBounds.size);
+    }
     canvas.restore();
     await _replaceTile(key, previous, recorder, tileBounds.size);
   }
@@ -527,7 +540,6 @@ class RasterDrawingPainter extends CustomPainter {
   final List<Stroke> legacyStrokes;
   final List<Stroke> activeChunks;
   final Stroke? activePreview;
-  final Stroke? activeEraser;
 
   RasterDrawingPainter({
     required this.tiles,
@@ -535,31 +547,12 @@ class RasterDrawingPainter extends CustomPainter {
     this.legacyStrokes = const [],
     this.activeChunks = const [],
     this.activePreview,
-    this.activeEraser,
     super.repaint,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final clipBounds = canvas.getLocalClipBounds();
-    _paintContent(canvas, size, clipBounds);
-    if (activeEraser == null) return;
-    final eraserBounds = _strokeBounds(activeEraser!)
-        .intersect(clipBounds)
-        .intersect(Offset.zero & size);
-    if (eraserBounds.isEmpty) return;
-    canvas.save();
-    canvas.clipRect(eraserBounds);
-    canvas.saveLayer(eraserBounds, Paint()..blendMode = BlendMode.src);
-    _paintContent(canvas, size, eraserBounds);
-    StrokePainter(
-      [activeEraser!],
-      null,
-      paintBackground: false,
-      blendMode: BlendMode.clear,
-    ).paint(canvas, size);
-    canvas.restore();
-    canvas.restore();
+    _paintContent(canvas, size, canvas.getLocalClipBounds());
   }
 
   void _paintContent(Canvas canvas, Size size, Rect clipBounds) {
@@ -602,8 +595,7 @@ class RasterDrawingPainter extends CustomPainter {
         tiles.length != oldDelegate.tiles.length ||
         legacyStrokes.length != oldDelegate.legacyStrokes.length ||
         activeChunks.length != oldDelegate.activeChunks.length ||
-        !identical(activePreview, oldDelegate.activePreview) ||
-        !identical(activeEraser, oldDelegate.activeEraser)) {
+        !identical(activePreview, oldDelegate.activePreview)) {
       return true;
     }
     for (final entry in tiles.entries) {
