@@ -166,6 +166,24 @@ Future<void> main() async {
       'stylus orientation survives serialization');
   print('PASS stylus dynamics survive serialization');
 
+  final zoneStamped = Note(
+    id: 'zone-note',
+    title: 'Stamped in the local zone',
+    updated: DateTime.utc(2026, 11, 12, 13, 29).toLocal(),
+    strokes: [],
+  );
+  expectEqual(
+    zoneStamped.toJson()['updated'],
+    '2026-11-12T13:29:00.000Z',
+    'update stamps serialize as UTC instants, not bare local clock time',
+  );
+  expectEqual(
+    Note.fromJson(zoneStamped.toJson()).updated.millisecondsSinceEpoch,
+    zoneStamped.updated.millisecondsSinceEpoch,
+    'a UTC-stamped note round-trips to the same instant',
+  );
+  print('PASS update timestamps are zone-safe instants');
+
   var rejectedFutureVersion = false;
   try {
     Note.fromJson({

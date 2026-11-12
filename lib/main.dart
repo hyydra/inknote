@@ -67,7 +67,7 @@ class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
           id: launcherNoteId,
           title: 'Launcher note',
           text: '',
-          updated: DateTime.now(),
+          updated: DateTime.now().toUtc(),
           strokes: [],
         );
     if (mounted) {
@@ -132,7 +132,7 @@ class _LibraryPageState extends State<LibraryPage> {
           id: const Uuid().v4(),
           title: 'Untitled note',
           text: '',
-          updated: DateTime.now(),
+          updated: DateTime.now().toUtc(),
           strokes: [],
         );
     await Navigator.push(
@@ -510,7 +510,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      unawaited(_finalizeActiveStroke());
+      // The editor deliberately has no per-keystroke autosave, but the process
+      // can be suspended or killed here, so flush what is already on screen.
+      if (hasUnsavedChanges && !isSaving) {
+        unawaited(save(showMessage: false));
+      } else {
+        unawaited(_finalizeActiveStroke());
+      }
     }
   }
 
@@ -1263,7 +1269,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.rasterWidth = rasterDrawing.width;
     widget.note.rasterPageHeight = rasterDrawing.pageHeight;
     widget.note.strokes.clear();
-    widget.note.updated = DateTime.now();
+    widget.note.updated = DateTime.now().toUtc();
     await store.save(widget.note);
     driveSyncDebouncer.schedule(currentNoteId: widget.note.id);
   }
@@ -1297,6 +1303,26 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return operation.whenComplete(() {
       if (identical(_saveOperation, operation)) _saveOperation = null;
     });
+  }
+
+  /// The installer path can terminate the process, so nothing may still be
+  /// waiting for the manual save when it starts.
+  Future<void> _installAvailableUpdate() async {
+    await _finalizeActiveStroke();
+    if (hasUnsavedChanges) {
+      await save(showMessage: false);
+      if (saveFailed || hasUnsavedChanges) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Update stopped because the note is unsaved'),
+            ),
+          );
+        }
+        return;
+      }
+    }
+    if (mounted) await UpdateService.prompt(context);
   }
 
   Future<void> _performSave({required bool showMessage}) async {
@@ -1996,7 +2022,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ),
               ),
               TextButton.icon(
-                onPressed: () => UpdateService.prompt(context),
+                onPressed: _installAvailableUpdate,
                 style: TextButton.styleFrom(
                   foregroundColor: scheme.onSecondaryContainer,
                 ),
@@ -2415,7 +2441,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                       syncDrive(chooseFolder: true);
                       return;
                     case 'update':
-                      UpdateService.prompt(context);
+                      _installAvailableUpdate();
                       return;
                     case 'open-source':
                       _showOpenSourceNotice();

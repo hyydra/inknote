@@ -307,7 +307,7 @@ class Note {
             entry.key.toString(): entry.value,
         },
         'rasterTiles': rasterTiles,
-        'updated': updated.toIso8601String(),
+        'updated': updated.toUtc().toIso8601String(),
         'strokes': strokes.map((stroke) => stroke.toJson()).toList(),
         'tasks': tasks.map((task) => task.toJson()).toList(),
       };
