@@ -193,7 +193,7 @@ class TextBlockFormat {
 }
 
 class Note {
-  static const int currentFormatVersion = 6;
+  static const int currentFormatVersion = 7;
 
   String id;
   String title;
@@ -205,6 +205,7 @@ class Note {
   int rasterWidth;
   int rasterPageHeight;
   Map<int, String> rasterPages;
+  Map<String, String> rasterTiles;
   DateTime updated;
   List<Stroke> strokes;
   List<TaskItem> tasks;
@@ -221,11 +222,13 @@ class Note {
     this.rasterWidth = 0,
     this.rasterPageHeight = 0,
     Map<int, String>? rasterPages,
+    Map<String, String>? rasterTiles,
     required this.updated,
     required this.strokes,
     List<TaskItem>? tasks,
   })  : textBlocks = textBlocks ?? (text.isEmpty ? <String>[] : <String>[text]),
         rasterPages = rasterPages ?? <int, String>{},
+        rasterTiles = rasterTiles ?? <String, String>{},
         textBlockFormats = textBlockFormats ??
             List.generate(
               textBlocks?.length ?? (text.isEmpty ? 0 : 1),
@@ -268,6 +271,7 @@ class Note {
       rasterWidth: value['rasterWidth'] as int? ?? 0,
       rasterPageHeight: value['rasterPageHeight'] as int? ?? 0,
       rasterPages: _parseRasterPages(value['rasterPages']),
+      rasterTiles: _parseRasterTiles(value['rasterTiles']),
       updated: DateTime.parse(value['updated'] as String),
       strokes: (value['strokes'] as List? ?? const [])
           .map(
@@ -302,10 +306,30 @@ class Note {
           for (final entry in rasterPages.entries)
             entry.key.toString(): entry.value,
         },
+        'rasterTiles': rasterTiles,
         'updated': updated.toIso8601String(),
         'strokes': strokes.map((stroke) => stroke.toJson()).toList(),
         'tasks': tasks.map((task) => task.toJson()).toList(),
       };
+}
+
+Map<String, String> _parseRasterTiles(Object? rawTiles) {
+  if (rawTiles == null) return <String, String>{};
+  if (rawTiles is! Map) {
+    throw const FormatException('Raster tiles must be an object');
+  }
+  final tiles = <String, String>{};
+  rawTiles.forEach((key, value) {
+    final parts = key.toString().split(':');
+    final validKey = parts.length == 3 &&
+        parts.every((part) => int.tryParse(part) != null) &&
+        parts.every((part) => int.parse(part) >= 0);
+    if (!validKey || value is! String) {
+      throw const FormatException('Invalid raster tile entry');
+    }
+    tiles[key.toString()] = value;
+  });
+  return tiles;
 }
 
 Map<int, String> _parseRasterPages(Object? rawPages) {

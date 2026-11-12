@@ -18,6 +18,21 @@ Future<int> alphaAt(ui.Image image, int x, int y) async {
   return data.getUint8((y * image.width + x) * 4 + 3);
 }
 
+Future<int> alphaAtStore(
+  RasterDrawingStore store,
+  int page,
+  int x,
+  int y,
+) async {
+  final image = store.tileAt(page, x.toDouble(), y.toDouble());
+  if (image == null) return 0;
+  return alphaAt(
+    image,
+    x % RasterDrawingStore.tileSize,
+    y % RasterDrawingStore.tileSize,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -33,16 +48,16 @@ void main() {
         pageCount: 1,
       );
 
-      final image = store.pages[0]!;
+      final image = store.tileAt(0, 50, 20)!;
       expect(image.width, 100);
       expect(image.height, 100);
       expect(await alphaAt(image, 50, 20), greaterThan(0));
       expect(await alphaAt(image, 50, 40), greaterThan(0));
 
       final encoded = await store.encode();
-      expect(encoded, contains(0));
+      expect(encoded, contains('0:0:0'));
       await reloaded.load(encoded);
-      expect(await alphaAt(reloaded.pages[0]!, 50, 20), greaterThan(0));
+      expect(await alphaAtStore(reloaded, 0, 50, 20), greaterThan(0));
 
       final erased = await store.eraseStroke(
         Stroke(
@@ -56,8 +71,8 @@ void main() {
         pageCount: 1,
       );
       expect(erased, isTrue);
-      expect(await alphaAt(store.pages[0]!, 50, 20), 0);
-      expect(await alphaAt(store.pages[0]!, 50, 40), greaterThan(0));
+      expect(await alphaAtStore(store, 0, 50, 20), 0);
+      expect(await alphaAtStore(store, 0, 50, 40), greaterThan(0));
     } finally {
       store.dispose();
       reloaded.dispose();
@@ -73,8 +88,7 @@ void main() {
         canvasPageHeight: 100,
         pageCount: 1,
       );
-      final beforeBlur = store.pages[0]!;
-      expect(await alphaAt(beforeBlur, 50, 58), 0);
+      expect(await alphaAtStore(store, 0, 50, 58), 0);
 
       await store.addStroke(
         Stroke(
@@ -89,7 +103,7 @@ void main() {
         pageCount: 1,
       );
 
-      expect(await alphaAt(store.pages[0]!, 50, 58), greaterThan(0));
+      expect(await alphaAtStore(store, 0, 50, 58), greaterThan(0));
     } finally {
       store.dispose();
     }
@@ -119,11 +133,126 @@ void main() {
           canvasPageHeight: 120,
           pageCount: 1,
         );
-        expect(await alphaAt(store.pages[0]!, 50, 10), greaterThan(0));
-        expect(await alphaAt(store.pages[0]!, 50, 110), greaterThan(0));
+        expect(await alphaAtStore(store, 0, 50, 10), greaterThan(0));
+        expect(await alphaAtStore(store, 0, 50, 110), greaterThan(0));
       }
     } finally {
       store.dispose();
+    }
+  });
+
+  test('a stroke crossing a tile boundary remains continuous', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStroke(
+        Stroke(
+          points: const [CanvasPoint(500, 80), CanvasPoint(530, 80)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+        canvasWidth: 1024,
+        canvasPageHeight: 600,
+        pageCount: 1,
+      );
+
+      expect(store.tiles, hasLength(2));
+      expect(await alphaAtStore(store, 0, 510, 80), greaterThan(0));
+      expect(await alphaAtStore(store, 0, 520, 80), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('only changed tiles become dirty after a cached save', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStrokes(
+        [line(20), line(40)],
+        canvasWidth: 1024,
+        canvasPageHeight: 600,
+        pageCount: 1,
+      );
+      expect(store.dirtyTileCount, 1);
+      final first = await store.encode();
+      expect(store.dirtyTileCount, 0);
+      final second = await store.encode();
+      expect(second, first);
+      expect(store.dirtyTileCount, 0);
+
+      await store.addStroke(
+        Stroke(
+          points: const [CanvasPoint(700, 80)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+        canvasWidth: 1024,
+        canvasPageHeight: 600,
+        pageCount: 1,
+      );
+      expect(store.dirtyTileCount, 1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('blur crosses tile boundaries without a visible gap', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStroke(
+        Stroke(
+          points: const [CanvasPoint(500, 80), CanvasPoint(530, 80)],
+          color: 0xff000000,
+          width: 6,
+          highlight: false,
+        ),
+        canvasWidth: 1024,
+        canvasPageHeight: 600,
+        pageCount: 1,
+      );
+      await store.addStroke(
+        Stroke(
+          points: const [CanvasPoint(512, 80)],
+          color: 0x00000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        canvasWidth: 1024,
+        canvasPageHeight: 600,
+        pageCount: 1,
+      );
+
+      expect(await alphaAtStore(store, 0, 510, 86), greaterThan(0));
+      expect(await alphaAtStore(store, 0, 514, 86), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('legacy full-page PNGs migrate into sparse tiles', () async {
+    final source = RasterDrawingStore();
+    final migrated = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await source.addStroke(
+        line(40),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+      final encoded = await source.encode();
+      await migrated.load(
+        const {},
+        legacyPages: {0: encoded['0:0:0']!},
+      );
+
+      expect(migrated.pageHasTiles(0), isTrue);
+      expect(await alphaAtStore(migrated, 0, 50, 40), greaterThan(0));
+      expect(migrated.dirtyTileCount, 1);
+    } finally {
+      source.dispose();
+      migrated.dispose();
     }
   });
 }

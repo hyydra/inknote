@@ -43,14 +43,25 @@ RasterDrawingPainter rasterPainter(WidgetTester tester) => tester
 
 Future<Color> rasterPixel(
   WidgetTester tester,
-  ui.Image image,
+  RasterDrawingPainter painter,
   int x,
   int y,
 ) async {
+  final page = y ~/ painter.pageHeight;
+  final pageY = y - page * painter.pageHeight;
+  final key = RasterTileKey(
+    page,
+    x ~/ RasterDrawingStore.tileSize,
+    pageY ~/ RasterDrawingStore.tileSize,
+  );
+  final image = painter.tiles[key];
+  if (image == null) return Colors.transparent;
+  final localX = x % RasterDrawingStore.tileSize;
+  final localY = pageY % RasterDrawingStore.tileSize;
   final color = await tester.runAsync(() async {
     final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (data == null) throw StateError('Raster page could not be read');
-    final offset = (y * image.width + x) * 4;
+    final offset = (localY * image.width + localX) * 4;
     return Color.fromARGB(
       data.getUint8(offset + 3),
       data.getUint8(offset),
@@ -61,6 +72,9 @@ Future<Color> rasterPixel(
   if (color == null) throw StateError('Raster pixel could not be read');
   return color;
 }
+
+bool painterHasPage(RasterDrawingPainter painter, int page) =>
+    painter.tiles.keys.any((key) => key.page == page);
 
 double contrastRatio(Color foreground, Color background) {
   final first = foreground.computeLuminance();
@@ -101,7 +115,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(note.strokes, isEmpty);
-    expect(rasterPainter(tester).pages, contains(0));
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
     expect(find.byIcon(Icons.undo), findsNothing);
     expect(find.byIcon(Icons.redo), findsNothing);
   });
@@ -131,7 +145,7 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(note.strokes, isEmpty);
-    expect(rasterPainter(tester).pages, contains(0));
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
   });
 
   testWidgets('nearby samples are skipped and the stroke endpoint is kept',
@@ -192,7 +206,7 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(note.strokes, isEmpty);
-    expect(rasterPainter(tester).pages, contains(0));
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
   });
 
   testWidgets('Android toolbar shows a T and a recognizable eraser icon',
@@ -333,7 +347,7 @@ void main() {
         stack.children.indexWhere((child) => child.key == key);
 
     expect(note.strokes, isEmpty);
-    expect(rasterPainter(tester).pages, contains(0));
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
     expect(
       layerIndex(const Key('raster-drawing-layer')),
       lessThan(layerIndex(const ValueKey('canvas-text-block-0'))),
@@ -361,7 +375,7 @@ void main() {
 
     final pixel = await rasterPixel(
       tester,
-      rasterPainter(tester).pages[0]!,
+      rasterPainter(tester),
       150,
       100,
     );
@@ -397,7 +411,7 @@ void main() {
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
       tester,
-      rasterPainter(tester).pages[0]!,
+      rasterPainter(tester),
       150,
       108,
     );
@@ -557,7 +571,7 @@ void main() {
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
       tester,
-      rasterPainter(tester).pages[0]!,
+      rasterPainter(tester),
       650,
       350,
     );
@@ -816,7 +830,7 @@ void main() {
         stack.children.indexWhere((child) => child.key == key);
 
     expect(note.strokes, isEmpty);
-    expect(rasterPainter(tester).pages, contains(0));
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
     expect(
       layerIndex(const Key('raster-drawing-layer')),
       lessThan(layerIndex(const ValueKey('canvas-text-block-0'))),

@@ -457,8 +457,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (widget.note.rasterPageHeight > 0) {
       canvasPageHeight = widget.note.rasterPageHeight.toDouble();
     }
-    _rasterLoadOperation =
-        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
+    _rasterLoadOperation = _loadRasterPages(
+      rasterDrawing,
+      widget.note.rasterTiles,
+      legacyPages: widget.note.rasterPages,
+    );
     syncService = DriveSyncService(
       store: store,
       backend: createPlatformSyncBackend(
@@ -513,11 +516,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Future<void> _loadRasterPages(
     RasterDrawingStore target,
-    Map<int, String> encodedPages,
-  ) async {
+    Map<String, String> encodedTiles, {
+    Map<int, String> legacyPages = const {},
+  }) async {
     Object? error;
     try {
-      await target.load(encodedPages);
+      await target.load(encodedTiles, legacyPages: legacyPages);
     } catch (loadError) {
       error = loadError;
     }
@@ -601,13 +605,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final migrationWidth = canvasWidth.ceil();
     final migrationPageHeight = canvasPageHeight.ceil();
     final migrationPageCount = widget.note.pageCount;
-    final encodedPages = await source.encode();
+    final encodedTiles = await source.encode();
     final migrated = RasterDrawingStore(
       width: source.width,
       pageHeight: source.pageHeight,
     );
     try {
-      await migrated.load(encodedPages);
+      await migrated.load(encodedTiles);
       await migrated.addStrokes(
         legacyStrokes,
         canvasWidth: migrationWidth,
@@ -1254,7 +1258,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   .toList(),
             ))
         .toList();
-    widget.note.rasterPages = await rasterDrawing.encode();
+    widget.note.rasterTiles = await rasterDrawing.encode();
+    widget.note.rasterPages.clear();
     widget.note.rasterWidth = rasterDrawing.width;
     widget.note.rasterPageHeight = rasterDrawing.pageHeight;
     widget.note.strokes.clear();
@@ -1411,19 +1416,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         orElse: () => PaperPattern.lined,
       ),
     ).paint(canvas, size);
-    final firstPage = rasterDrawing.pages[0];
-    if (firstPage != null) {
-      canvas.drawImageRect(
-        firstPage,
-        Rect.fromLTWH(
-          0,
-          0,
-          firstPage.width.toDouble(),
-          firstPage.height.toDouble(),
-        ),
-        Offset.zero & size,
-        Paint()..filterQuality = FilterQuality.medium,
+    if (rasterDrawing.pageHasTiles(0)) {
+      canvas.save();
+      canvas.scale(
+        size.width / math.max(1, rasterDrawing.width),
+        size.height / math.max(1, rasterDrawing.pageHeight),
       );
+      rasterDrawing.paintPage(
+        canvas,
+        0,
+        paint: Paint()..filterQuality = FilterQuality.medium,
+      );
+      canvas.restore();
     }
     final picture = recorder.endRecording();
     final image = await picture.toImage(
@@ -1622,6 +1626,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         widget.note.rasterWidth = syncedCurrent.rasterWidth;
         widget.note.rasterPageHeight = syncedCurrent.rasterPageHeight;
         widget.note.rasterPages = Map.of(syncedCurrent.rasterPages);
+        widget.note.rasterTiles = Map.of(syncedCurrent.rasterTiles);
         canvasWidth = math.max(2000.0, syncedCurrent.rasterWidth.toDouble());
         if (syncedCurrent.rasterPageHeight > 0) {
           canvasPageHeight = syncedCurrent.rasterPageHeight.toDouble();
@@ -1638,8 +1643,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     } finally {
       applyingExternalChange = false;
     }
-    _rasterLoadOperation =
-        _loadRasterPages(rasterDrawing, widget.note.rasterPages);
+    _rasterLoadOperation = _loadRasterPages(
+      rasterDrawing,
+      widget.note.rasterTiles,
+      legacyPages: widget.note.rasterPages,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       oldRasterDrawing.dispose();
     });
@@ -2273,7 +2281,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                             'blur-strokes-$layerIndex-$index',
                           ),
                           painter: RasterDrawingPainter(
-                            pages: rasterDrawing.pages,
+                            tiles: rasterDrawing.tiles,
                             pageHeight: canvasPageHeight.round(),
                             legacyStrokes: priorStrokes,
                           ),
@@ -2654,7 +2662,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   child: IgnorePointer(
                                     child: CustomPaint(
                                       painter: RasterDrawingPainter(
-                                        pages: rasterDrawing.pages,
+                                        tiles: rasterDrawing.tiles,
                                         pageHeight: canvasPageHeight.round(),
                                         legacyStrokes: widget.note.strokes,
                                         activePreview:
