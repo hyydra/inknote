@@ -723,14 +723,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _growTextBlockToFit(int index) {
     if (index < 0 || index >= textControllers.length) return;
     final format = textFormats[index];
-    final painter = TextPainter(
-      text: textControllers[index].buildTextSpan(
-        context: context,
-        withComposing: false,
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout(maxWidth: math.max(1, format.width - 16));
+    final painter = _layoutTextBlock(index);
     final requiredHeight = math.max(90.0, painter.height + 48);
     if (requiredHeight <= format.height) return;
     setState(() => format.height = requiredHeight);
@@ -975,26 +968,73 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     });
   }
 
-  int? _textBlockAtViewport(Offset viewportPoint) {
+  static const double _textContentLeft = 8;
+  static const double _textContentTop = 32;
+  static const double _textContentWidthInset = 16;
+
+  TextPainter _layoutTextBlock(int index) {
+    final format = textFormats[index];
+    return TextPainter(
+      text: textControllers[index].buildTextSpan(
+        context: context,
+        withComposing: false,
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: math.max(1, format.width - _textContentWidthInset));
+  }
+
+  /// True when [textLocal], measured from the first glyph of the block, falls
+  /// inside one of the laid-out line boxes.
+  bool _pointHitsTextLine(int index, Offset textLocal) {
+    if (textLocal.dx < 0 || textLocal.dy < 0) return false;
+    var lineTop = 0.0;
+    for (final line in _layoutTextBlock(index).computeLineMetrics()) {
+      final lineBottom = lineTop + line.height;
+      if (textLocal.dy <= lineBottom) {
+        return textLocal.dx >= line.left &&
+            textLocal.dx <= line.left + line.width;
+      }
+      lineTop = lineBottom;
+    }
+    return false;
+  }
+
+  /// The text block that owns [viewportPoint], with the point in that block's
+  /// text coordinates. Only points on a line of glyphs count; the rest of a
+  /// written block is paper.
+  (int index, Offset textLocal)? _textBlockHitAt(Offset viewportPoint) {
     if (!showText) return null;
     final scenePoint = canvasTransform.sceneFromViewport(
       CanvasPoint(viewportPoint.dx, viewportPoint.dy),
     );
     for (var index = textFormats.length - 1; index >= 0; index--) {
       final format = textFormats[index];
-      if (scenePoint.x >= format.x &&
-          scenePoint.x <= format.x + format.width &&
-          scenePoint.y >= format.y &&
-          scenePoint.y <= format.y + format.height) {
-        return index;
+      if (scenePoint.x < format.x ||
+          scenePoint.x > format.x + format.width ||
+          scenePoint.y < format.y ||
+          scenePoint.y > format.y + format.height) {
+        continue;
       }
+      final textLocal = Offset(
+        scenePoint.x - (format.x + _textContentLeft),
+        scenePoint.y - (format.y + _textContentTop),
+      );
+      // A block with no text yet opens on a tap anywhere in its frame.
+      if (textControllers[index].text.isEmpty) return (index, textLocal);
+      if (_pointHitsTextLine(index, textLocal)) return (index, textLocal);
     }
     return null;
   }
 
   bool _activateTextAt(Offset viewportPoint) {
-    final index = _textBlockAtViewport(viewportPoint);
-    if (index == null) return false;
+    final hit = _textBlockHitAt(viewportPoint);
+    if (hit == null) return false;
+    final index = hit.$1;
+    // While the block is being edited its own field handles the pointer,
+    // including caret and selection; otherwise the canvas has to place the
+    // caret where the tap landed.
+    final fieldOwnedPointer = tool == DrawTool.text && activeTextIndex == index;
     setState(() {
       active = null;
       activeEraser = null;
@@ -1002,9 +1042,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       tool = DrawTool.text;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && index < textFocusNodes.length) {
-        textFocusNodes[index].requestFocus();
+      if (!mounted || index >= textFocusNodes.length) return;
+      if (!fieldOwnedPointer) {
+        textControllers[index].selection = TextSelection.collapsed(
+          offset: _layoutTextBlock(index).getPositionForOffset(hit.$2).offset,
+        );
+        // The field never saw this pointer, so its tap handler - which is what
+        // toggles an inline checklist mark - has to run from here.
+        _toggleChecklistAtSelection(index);
       }
+      textFocusNodes[index].requestFocus();
     });
     return true;
   }
@@ -2045,12 +2092,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       top: format.y,
       width: format.width,
       height: format.height,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() {
-          activeTextIndex = index;
-          tool = DrawTool.text;
-        }),
+      // Only the block being edited takes pointers; every other block leaves
+      // the canvas to decide, so a tap that misses the glyphs can draw.
+      child: IgnorePointer(
+        ignoring: !(tool == DrawTool.text && activeTextIndex == index),
         child: Padding(
           padding: const EdgeInsets.only(top: 28),
           child: TextField(
