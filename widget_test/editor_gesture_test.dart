@@ -85,6 +85,55 @@ double contrastRatio(Color foreground, Color background) {
 int alphaOf(Color color) => color.toARGB32() >> 24;
 
 void main() {
+  Future<void> openNoteWithText(WidgetTester tester, String text) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pumpAndSettle();
+    if (text.isNotEmpty) {
+      await tester.enterText(
+        find.byKey(const ValueKey('canvas-text-field-0')),
+        text,
+      );
+      await tester.pumpAndSettle();
+    }
+    // Leave editing so the next tap has to be decided by the canvas.
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Pen'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+  }
+
+  Offset documentTopLeft(WidgetTester tester) => tester.getTopLeft(
+        find.byKey(const ValueKey('canvas-text-block-0')),
+      );
+
+  Size documentSize(WidgetTester tester) => tester.getSize(
+        find.byKey(const ValueKey('canvas-text-block-0')),
+      );
+
+  bool documentFocused(WidgetTester tester) => tester
+      .widget<TextField>(find.byKey(const ValueKey('canvas-text-field-0')))
+      .focusNode!
+      .hasFocus;
+
+  String documentText(WidgetTester tester) => tester
+      .widget<TextField>(find.byKey(const ValueKey('canvas-text-field-0')))
+      .controller!
+      .text;
+
+  int documentCaret(WidgetTester tester) => tester
+      .widget<TextField>(find.byKey(const ValueKey('canvas-text-field-0')))
+      .controller!
+      .selection
+      .extentOffset;
+
   test('stroke painters skip unchanged strokes', () {
     final stroke = noteWithStroke().strokes.single;
     final original = StrokePainter([stroke], null);
@@ -231,59 +280,6 @@ void main() {
     expect(find.byIcon(Icons.backspace_outlined), findsNothing);
   });
 
-  testWidgets('tapping the canvas adds text at that position', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.android),
-        home: EditorPage(note: emptyNote()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Text'));
-    await tester.pump();
-    final canvas = find.byType(InteractiveViewer);
-    final tapPosition = tester.getTopLeft(canvas) + const Offset(220, 180);
-    await tester.tapAt(tapPosition);
-    await tester.pumpAndSettle();
-
-    final textBlock = find.byKey(const ValueKey('canvas-text-block-0'));
-    expect(textBlock, findsOneWidget);
-    final position = tester.widget<Positioned>(textBlock);
-    expect(position.left, closeTo(220, 1));
-    expect(position.top, closeTo(180, 1));
-
-    final textToolbar = find.byKey(const Key('text-toolbar'));
-    final drawingToolbar = find.byKey(const Key('android-drawing-toolbar'));
-    expect(textToolbar, findsOneWidget);
-    expect(drawingToolbar, findsOneWidget);
-    expect(
-      tester.getTopLeft(textToolbar).dy,
-      lessThan(tester.getTopLeft(drawingToolbar).dy),
-    );
-    expect(
-      find.descendant(
-        of: textToolbar,
-        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.ancestor(
-        of: find.byTooltip('Add text block'),
-        matching: find.byWidgetPredicate(
-          (widget) =>
-              widget is DecoratedBox &&
-              widget.decoration is BoxDecoration &&
-              (widget.decoration as BoxDecoration).border != null,
-        ),
-      ),
-      findsOneWidget,
-    );
-  });
-
   testWidgets('drawing width can be adjusted for pen and pencil',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
@@ -307,7 +303,8 @@ void main() {
     expect(tester.widget<Slider>(widthSlider).value, greaterThan(2));
   });
 
-  testWidgets('legacy drawing migrates beneath text blocks', (tester) async {
+  testWidgets('legacy drawing migrates beneath the text document',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = Note(
@@ -626,7 +623,7 @@ void main() {
     // Tap on the glyphs: the empty area below the line is paper now.
     await tester.tapAt(
       tester.getTopLeft(find.byKey(const ValueKey('canvas-text-block-0'))) +
-          const Offset(40, 44),
+          const Offset(40, 16),
     );
     await tester.pump();
 
@@ -656,160 +653,44 @@ void main() {
     expect(find.widgetWithText(TextButton, 'Licences'), findsOneWidget);
   });
 
-  testWidgets('multiple transparent text blocks can be added', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(800, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: emptyNote()),
-      ),
-    );
-
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pump();
-
-    final firstBlock = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField && widget.decoration?.hintText == 'Text block 1',
-    );
-    final secondBlock = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField && widget.decoration?.hintText == 'Text block 2',
-    );
-    expect(firstBlock, findsOneWidget);
-    expect(secondBlock, findsOneWidget);
-    expect(
-      tester.widget<TextField>(firstBlock).decoration?.fillColor,
-      Colors.transparent,
-    );
-    expect(tester.widget<TextField>(firstBlock).decoration?.filled, isFalse);
-  });
-
-  testWidgets('a text block can be moved and resized on the canvas',
+  testWidgets('the document spans the page from the top of page 1',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: emptyNote()),
-      ),
-    );
+    await openNoteWithText(tester, 'Hello');
+    final stack = find.byKey(const Key('canvas-layer-stack'));
+    final stackWidth = tester.getSize(stack).width;
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
-    await tester.pump();
-
-    Positioned block() => tester.widget<Positioned>(
-          find.byKey(const ValueKey('canvas-text-block-0')),
-        );
-
-    final initialLeft = block().left!;
-    final initialTop = block().top!;
-    final initialWidth = block().width!;
-    final initialHeight = block().height!;
-
-    await tester.drag(
-      find.byKey(const ValueKey('move-text-block-0')),
-      const Offset(40, 30),
-    );
-    await tester.pump();
-    expect(block().left, greaterThan(initialLeft));
-    expect(block().top, greaterThan(initialTop));
-
-    await tester.drag(
-      find.byKey(const ValueKey('resize-text-block-0')),
-      const Offset(60, 50),
-    );
-    await tester.pump();
-    expect(block().width, greaterThan(initialWidth));
-    expect(block().height, greaterThan(initialHeight));
-
-    FocusManager.instance.primaryFocus?.unfocus();
-    await tester.pump();
+    expect(documentSize(tester).width, greaterThan(stackWidth * 0.9));
     expect(
-      find.byKey(const ValueKey('resize-text-block-0')),
-      findsNothing,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey('resize-text-block-0')),
-      findsOneWidget,
+      documentTopLeft(tester) - tester.getTopLeft(stack),
+      const Offset(48, 48),
     );
   });
 
-  testWidgets('a text block grows when new lines no longer fit',
-      (tester) async {
+  testWidgets('a long document appends pages as it grows', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: emptyNote()),
+        home: EditorPage(note: note),
       ),
     );
-
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pump();
-    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
-    final initialHeight = tester.widget<Positioned>(blockFinder).height!;
+    await tester.pumpAndSettle();
 
     await tester.enterText(
       find.byKey(const ValueKey('canvas-text-field-0')),
-      List.generate(14, (index) => 'Line ${index + 1}').join('\n'),
-    );
-    await tester.pump();
-
-    expect(
-      tester.widget<Positioned>(blockFinder).height,
-      greaterThan(initialHeight),
-    );
-  });
-
-  testWidgets('text reflows when a text block is resized narrower',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 1200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: emptyNote()),
-      ),
-    );
-
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pumpAndSettle();
-    final blockFinder = find.byKey(const ValueKey('canvas-text-block-0'));
-    final fieldFinder = find.byKey(const ValueKey('canvas-text-field-0'));
-    await tester.enterText(fieldFinder, List.filled(70, 'reflow').join(' '));
-    await tester.pumpAndSettle();
-
-    Positioned block() => tester.widget<Positioned>(blockFinder);
-    final initialWidth = block().width!;
-    final initialHeight = block().height!;
-    await tester.drag(
-      find.byKey(const ValueKey('resize-text-block-0')),
-      const Offset(-160, 0),
+      List.generate(140, (index) => 'Line ${index + 1} writes on').join('\n'),
     );
     await tester.pumpAndSettle();
 
-    expect(block().width, lessThan(initialWidth));
-    expect(block().height, greaterThan(initialHeight));
-    expect(tester.widget<TextField>(fieldFinder).maxLines, isNull);
+    final document = tester.getRect(
+      find.byKey(const ValueKey('canvas-text-block-0')),
+    );
+    expect(document.height, greaterThan(1200));
+    expect(note.pageCount, greaterThan(2));
   });
 
   testWidgets('migrated blur stays in the raster layer beneath text',
@@ -894,7 +775,7 @@ void main() {
     expect(find.text('Autosave on'), findsNothing);
   });
 
-  testWidgets('bold applies to selected text instead of the whole block',
+  testWidgets('bold applies to selected text, not the document',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -947,7 +828,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
     expect(find.byKey(const Key('drawing-toolbar')), findsOneWidget);
-    expect(find.byTooltip('Add text block'), findsOneWidget);
+    expect(find.byTooltip('Add text block'), findsNothing);
     expect(find.byTooltip('Lists'), findsOneWidget);
     expect(find.byTooltip('Text colour'), findsOneWidget);
     expect(
@@ -964,8 +845,6 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pump();
     expect(find.byKey(const ValueKey('canvas-text-block-0')), findsOneWidget);
     expect(
       tester.getCenter(find.byKey(const Key('text-toolbar'))).dy,
@@ -1000,13 +879,6 @@ void main() {
         tester.getTopLeft(find.byKey(const Key('android-drawing-toolbar'))).dy,
       ),
     );
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('text-toolbar')),
-        matching: find.byKey(const ValueKey('drawing-tool-icon-text')),
-      ),
-      findsOneWidget,
-    );
     await tester.tap(find.byTooltip('Font size'));
     await tester.pumpAndSettle();
     final fontSizeMarks = find.byWidgetPredicate((widget) {
@@ -1029,8 +901,6 @@ void main() {
     );
 
     await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
     await tester.pump();
     final finder = find.byKey(const ValueKey('canvas-text-field-0'));
     final field = tester.widget<TextField>(finder);
@@ -1109,127 +979,87 @@ void main() {
     expectUpdateTextContrast();
   });
 
-  Future<void> openNoteWithTextBlock(WidgetTester tester, String text) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: emptyNote()),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Add text block'));
-    await tester.pumpAndSettle();
-    if (text.isNotEmpty) {
-      await tester.enterText(
-        find.byKey(const ValueKey('canvas-text-field-0')),
-        text,
-      );
-      await tester.pumpAndSettle();
-    }
-    // Leave editing so the next tap has to be decided by the canvas.
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Pen'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('text-toolbar')), findsNothing);
-  }
-
-  Offset blockTopLeft(WidgetTester tester) => tester.getTopLeft(
-        find.byKey(const ValueKey('canvas-text-block-0')),
-      );
-
-  Size blockSize(WidgetTester tester) => tester.getSize(
-        find.byKey(const ValueKey('canvas-text-block-0')),
-      );
-
-  bool textBlockFocused(WidgetTester tester) =>
-      tester.widget<TextField>(
-        find.byKey(const ValueKey('canvas-text-field-0')),
-      ).focusNode!.hasFocus;
-
-  testWidgets('tapping a letter opens the text block for editing',
+  testWidgets('tapping a letter opens the document for editing',
       (tester) async {
-    await openNoteWithTextBlock(tester, 'Hello');
+    await openNoteWithText(tester, 'Hello');
 
-    await tester.tapAt(blockTopLeft(tester) + const Offset(16, 44));
+    await tester.tapAt(documentTopLeft(tester) + const Offset(16, 16));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(textBlockFocused(tester), isTrue);
+    expect(documentFocused(tester), isTrue);
     expect(painterHasPage(rasterPainter(tester), 0), isFalse);
-    expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('canvas-text-field-0')),
-          )
-          .controller!
-          .text,
-      'Hello',
-    );
+    expect(documentText(tester), 'Hello');
   });
 
   testWidgets('tapping past the end of a line draws instead of editing text',
       (tester) async {
-    await openNoteWithTextBlock(tester, 'Hello');
-    final size = blockSize(tester);
+    await openNoteWithText(tester, 'Hello');
 
     await tester.dragFrom(
-      blockTopLeft(tester) + Offset(size.width - 20, 44),
+      documentTopLeft(tester) + const Offset(160, 16),
       const Offset(0, 30),
     );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
-    expect(textBlockFocused(tester), isFalse);
+    expect(documentFocused(tester), isFalse);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
   });
 
-  testWidgets('tapping the blank padding under the text draws instead of '
+  testWidgets(
+      'tapping the blank padding under the text draws instead of '
       'editing text', (tester) async {
-    await openNoteWithTextBlock(tester, 'Hello');
-    final size = blockSize(tester);
+    await openNoteWithText(tester, 'Hello');
 
     await tester.dragFrom(
-      blockTopLeft(tester) + Offset(60, size.height - 16),
+      documentTopLeft(tester) + const Offset(60, 44),
       const Offset(0, 24),
     );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
-    expect(textBlockFocused(tester), isFalse);
+    expect(documentFocused(tester), isFalse);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
   });
 
-  testWidgets('tapping an empty text block still opens it for editing',
+  testWidgets('tapping blank canvas in text mode puts the caret at the end',
       (tester) async {
-    await openNoteWithTextBlock(tester, '');
-    final size = blockSize(tester);
-
-    await tester.tapAt(blockTopLeft(tester) + Offset(60, size.height - 40));
+    await openNoteWithText(tester, 'Hello');
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
-    expect(textBlockFocused(tester), isTrue);
+    // Well below the document's own single line, outside its field.
+    await tester.tapAt(documentTopLeft(tester) + const Offset(140, 400));
+    await tester.pumpAndSettle();
+
+    expect(documentFocused(tester), isTrue);
+    expect(documentCaret(tester), 5);
+  });
+
+  testWidgets('an empty document is paper until the text tool is chosen',
+      (tester) async {
+    await openNoteWithText(tester, '');
+
+    await tester.dragFrom(
+      documentTopLeft(tester) + const Offset(60, 20),
+      const Offset(40, 20),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+    expect(documentFocused(tester), isFalse);
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
   });
 
   testWidgets('tapping a checklist mark toggles it on the first tap',
       (tester) async {
-    await openNoteWithTextBlock(tester, '☐ Milk');
+    await openNoteWithText(tester, '☐ Milk');
 
-    await tester.tapAt(blockTopLeft(tester) + const Offset(16, 44));
+    await tester.tapAt(documentTopLeft(tester) + const Offset(16, 16));
     await tester.pumpAndSettle();
 
-    expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('canvas-text-field-0')),
-          )
-          .controller!
-          .text,
-      '☑ Milk',
-    );
+    expect(documentText(tester), '☑ Milk');
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
   });
 }

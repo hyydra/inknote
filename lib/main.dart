@@ -19,7 +19,6 @@ import 'note_store.dart';
 import 'pennino_theme.dart';
 import 'raster_drawing.dart';
 import 'rich_text_controller.dart';
-import 'text_block_controller.dart';
 import 'update_service.dart';
 
 export 'app_version.dart' show appVersion;
@@ -393,7 +392,9 @@ class EditorPage extends StatefulWidget {
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('notes/widget');
   late final TextEditingController titleController;
-  late final TextBlockController textBlockController;
+  late final RichTextEditingController textController;
+  late final FocusNode textFocusNode;
+  TextDocumentFormat documentFormat = TextDocumentFormat();
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
@@ -439,13 +440,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   late final DriveSyncService syncService;
   late final DriveSyncDebouncer driveSyncDebouncer;
 
-  List<RichTextEditingController> get textControllers =>
-      textBlockController.controllers;
-  List<FocusNode> get textFocusNodes => textBlockController.focusNodes;
-  List<TextBlockFormat> get textFormats => textBlockController.formats;
-  int get activeTextIndex => textBlockController.activeIndex;
-  set activeTextIndex(int index) => textBlockController.activeIndex = index;
-
   @override
   void initState() {
     super.initState();
@@ -469,12 +463,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       ),
     );
     driveSyncDebouncer = DriveSyncDebouncer(service: syncService);
-    textBlockController = TextBlockController(
-      onChanged: _markChanged,
-      onFocusChanged: () {
+    textFocusNode = FocusNode()
+      ..addListener(() {
         if (mounted) setState(() {});
-      },
-    );
+      });
+    textController = RichTextEditingController(text: '', styles: [])
+      ..addListener(_markChanged);
     titleController = TextEditingController(text: widget.note.title);
     titleController.addListener(_markChanged);
     taskController = TextEditingController();
@@ -494,7 +488,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     driveSyncDebouncer.dispose();
     titleController.dispose();
-    textBlockController.dispose();
+    textController.dispose();
+    textFocusNode.dispose();
     taskController.dispose();
     rasterDrawing.dispose();
     transformationController.dispose();
@@ -656,38 +651,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     setState(() => hasUnsavedChanges = true);
   }
 
-  void addTextBlock() => _createTextBlock();
-
-  void _createTextBlock({Offset? position}) {
-    var addedIndex = 0;
-    setState(() {
-      showText = true;
-      tool = DrawTool.text;
-      addedIndex = textBlockController.add(
-        x: position?.dx,
-        y: position?.dy,
-      );
-      activeTextIndex = addedIndex;
-    });
-    _markChanged();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || addedIndex >= textFocusNodes.length) return;
-      textFocusNodes[addedIndex].requestFocus();
-    });
-  }
-
-  void removeTextBlock(int index) {
-    setState(() {
-      textBlockController.removeAt(index);
-    });
-    _markChanged();
-  }
-
-  RichTextEditingController? get _activeTextController => textControllers
-          .isEmpty
-      ? null
-      : textControllers[activeTextIndex.clamp(0, textControllers.length - 1)];
-
   Color get _activeStrokeColor =>
       tool == DrawTool.highlighter ? highlighterColor : strokeColor;
 
@@ -718,75 +681,47 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void _loadDocumentIntoEditor(String text, TextDocumentFormat format) {
-    textBlockController.replace(
-      text.isEmpty ? const <String>[] : [text],
-      formats: text.isEmpty
-          ? const <TextBlockFormat>[]
-          : [
-              TextBlockFormat(
-                bold: format.bold,
-                color: format.color,
-                fontSize: format.fontSize,
-                styles: format.styles
-                    .map((style) => TextStyleRange(
-                          start: style.start,
-                          end: style.end,
-                          bold: style.bold,
-                          color: style.color,
-                          fontSize: style.fontSize,
-                        ))
-                    .toList(),
-              ),
-            ],
+    documentFormat = format.copy();
+    // The style list is attached after the text: `RichTextEditingController`
+    // shifts every range it holds when the text changes, so loading into an
+    // already-styled controller would move all the note's offsets to the end.
+    textController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
     );
-  }
-
-  void _growTextBlockToFit(int index) {
-    if (index < 0 || index >= textControllers.length) return;
-    final format = textFormats[index];
-    final painter = _layoutTextBlock(index);
-    final requiredHeight = math.max(90.0, painter.height + 48);
-    if (requiredHeight <= format.height) return;
-    setState(() => format.height = requiredHeight);
-    _markChanged();
+    textController.styles
+      ..clear()
+      ..addAll(documentFormat.styles);
   }
 
   void _setTextFontSize(double size) {
-    final controller = _activeTextController;
-    if (controller == null) return;
-    final selection = controller.selection;
+    final selection = textController.selection;
     setState(() {
       if (selection.isValid && !selection.isCollapsed) {
-        controller.applyStyle(selection, fontSize: size);
+        textController.applyStyle(selection, fontSize: size);
       } else {
-        textFormats[activeTextIndex].fontSize = size;
+        documentFormat.fontSize = size;
       }
     });
     _markChanged();
   }
 
   void _toggleTextBold() {
-    final controller = _activeTextController;
-    if (controller == null) return;
-    final format = textFormats[activeTextIndex];
-    final selection = controller.selection;
+    final selection = textController.selection;
     setState(() {
       if (selection.isValid && !selection.isCollapsed) {
-        final current = controller.selectedBold(selection) ?? format.bold;
-        controller.applyStyle(selection, bold: !current);
+        final current =
+            textController.selectedBold(selection) ?? documentFormat.bold;
+        textController.applyStyle(selection, bold: !current);
       } else {
-        format.bold = !format.bold;
+        documentFormat.bold = !documentFormat.bold;
       }
     });
     _markChanged();
   }
 
   void _toggleLinePrefix(String prefix) {
-    final controller = _activeTextController;
-    if (controller == null) {
-      addTextBlock();
-      return;
-    }
+    final controller = textController;
     final value = controller.value;
     final cursor =
         value.selection.isValid ? value.selection.start : value.text.length;
@@ -811,9 +746,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  void _toggleChecklistAtSelection(int index) {
-    if (index < 0 || index >= textControllers.length) return;
-    final controller = textControllers[index];
+  void _toggleChecklistAtSelection() {
+    final controller = textController;
     final value = controller.value;
     if (!value.selection.isValid) return;
     final cursor = value.selection.extentOffset;
@@ -836,8 +770,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void _changeIndent(bool increase) {
-    final controller = _activeTextController;
-    if (controller == null) return;
+    final controller = textController;
     final value = controller.value;
     final cursor =
         value.selection.isValid ? value.selection.start : value.text.length;
@@ -904,15 +837,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       ];
 
   void _setTextColor(Color selected) {
-    if (textControllers.isEmpty) return;
-    final controller = _activeTextController;
-    if (controller == null) return;
-    final selection = controller.selection;
+    final selection = textController.selection;
     setState(() {
       if (selection.isValid && !selection.isCollapsed) {
-        controller.applyStyle(selection, color: selected.toARGB32());
+        textController.applyStyle(selection, color: selected.toARGB32());
       } else {
-        textFormats[activeTextIndex].color = selected.toARGB32();
+        documentFormat.color = selected.toARGB32();
       }
     });
     _markChanged();
@@ -989,28 +919,49 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     });
   }
 
+  static const double _documentPageMargin = 48;
+  static const double _documentContentTop = 4;
+  static const double _documentContentBottom = 8;
   static const double _textContentLeft = 8;
-  static const double _textContentTop = 32;
   static const double _textContentWidthInset = 16;
 
-  TextPainter _layoutTextBlock(int index) {
-    final format = textFormats[index];
-    return TextPainter(
-      text: textControllers[index].buildTextSpan(
+  /// The document owns a fixed column: the full page width between the paper
+  /// margins. Nothing about it is stored per note, so it cannot be moved or
+  /// resized and there is no box to grow.
+  double get _documentColumnWidth =>
+      math.max(240, canvasWidth - 2 * _documentPageMargin);
+
+  /// The document's own base style. `RichTextEditingController.buildTextSpan`
+  /// merges each stored range onto this, so the layout used for hit-testing
+  /// and page growth measures the same glyphs the field paints.
+  TextStyle get _documentStyle => TextStyle(
+        color: Color(documentFormat.color),
+        fontSize: documentFormat.fontSize,
+        fontWeight: documentFormat.bold ? FontWeight.bold : FontWeight.normal,
+      );
+
+  TextPainter _layoutDocument() {
+    final painter = TextPainter(
+      text: textController.buildTextSpan(
         context: context,
+        style: _documentStyle,
         withComposing: false,
       ),
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
-    )..layout(maxWidth: math.max(1, format.width - _textContentWidthInset));
+    );
+    painter.layout(
+      maxWidth: math.max(1, _documentColumnWidth - _textContentWidthInset),
+    );
+    return painter;
   }
 
-  /// True when [textLocal], measured from the first glyph of the block, falls
-  /// inside one of the laid-out line boxes.
-  bool _pointHitsTextLine(int index, Offset textLocal) {
+  /// True when [textLocal], measured from the first glyph of the document,
+  /// falls inside one of the laid-out line boxes.
+  bool _pointHitsDocumentLine(Offset textLocal) {
     if (textLocal.dx < 0 || textLocal.dy < 0) return false;
     var lineTop = 0.0;
-    for (final line in _layoutTextBlock(index).computeLineMetrics()) {
+    for (final line in _layoutDocument().computeLineMetrics()) {
       final lineBottom = lineTop + line.height;
       if (textLocal.dy <= lineBottom) {
         return textLocal.dx >= line.left &&
@@ -1021,60 +972,77 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return false;
   }
 
-  /// The text block that owns [viewportPoint], with the point in that block's
-  /// text coordinates. Only points on a line of glyphs count; the rest of a
-  /// written block is paper.
-  (int index, Offset textLocal)? _textBlockHitAt(Offset viewportPoint) {
+  /// The point in the document's own text coordinates, or null when the text
+  /// layer is hidden.
+  Offset? _documentTextLocal(Offset viewportPoint) {
     if (!showText) return null;
     final scenePoint = canvasTransform.sceneFromViewport(
       CanvasPoint(viewportPoint.dx, viewportPoint.dy),
     );
-    for (var index = textFormats.length - 1; index >= 0; index--) {
-      final format = textFormats[index];
-      if (scenePoint.x < format.x ||
-          scenePoint.x > format.x + format.width ||
-          scenePoint.y < format.y ||
-          scenePoint.y > format.y + format.height) {
-        continue;
-      }
-      final textLocal = Offset(
-        scenePoint.x - (format.x + _textContentLeft),
-        scenePoint.y - (format.y + _textContentTop),
-      );
-      // A block with no text yet opens on a tap anywhere in its frame.
-      if (textControllers[index].text.isEmpty) return (index, textLocal);
-      if (_pointHitsTextLine(index, textLocal)) return (index, textLocal);
-    }
-    return null;
+    return Offset(
+      scenePoint.x - (_documentPageMargin + _textContentLeft),
+      scenePoint.y - (_documentPageMargin + _documentContentTop),
+    );
   }
 
-  bool _activateTextAt(Offset viewportPoint) {
-    final hit = _textBlockHitAt(viewportPoint);
-    if (hit == null) return false;
-    final index = hit.$1;
-    // While the block is being edited its own field handles the pointer,
-    // including caret and selection; otherwise the canvas has to place the
-    // caret where the tap landed.
-    final fieldOwnedPointer = tool == DrawTool.text && activeTextIndex == index;
+  bool _activateDocument(Offset viewportPoint) {
+    final textLocal = _documentTextLocal(viewportPoint);
+    // An empty document lays out no lines, so a blank page stays paper for
+    // every tool - the v0.4.20 empty-block exception went with the boxes.
+    if (textLocal == null || !_pointHitsDocumentLine(textLocal)) return false;
+    // The field only takes pointers in text mode, so a drawing-tool tap that
+    // activates it has to place the caret where the tap landed.
+    final fieldOwnedPointer = tool == DrawTool.text;
     setState(() {
       active = null;
       activeEraser = null;
-      activeTextIndex = index;
+      showText = true;
       tool = DrawTool.text;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || index >= textFocusNodes.length) return;
+      if (!mounted) return;
       if (!fieldOwnedPointer) {
-        textControllers[index].selection = TextSelection.collapsed(
-          offset: _layoutTextBlock(index).getPositionForOffset(hit.$2).offset,
+        textController.selection = TextSelection.collapsed(
+          offset: _layoutDocument().getPositionForOffset(textLocal).offset,
         );
         // The field never saw this pointer, so its tap handler - which is what
         // toggles an inline checklist mark - has to run from here.
-        _toggleChecklistAtSelection(index);
+        _toggleChecklistAtSelection();
       }
-      textFocusNodes[index].requestFocus();
+      textFocusNode.requestFocus();
     });
     return true;
+  }
+
+  /// A tap on bare paper in text mode keeps writing: the caret goes to the end
+  /// of the document instead of opening another box.
+  void _focusDocumentAtEnd() {
+    setState(() {
+      showText = true;
+      tool = DrawTool.text;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      textController.selection =
+          TextSelection.collapsed(offset: textController.text.length);
+      textFocusNode.requestFocus();
+    });
+  }
+
+  /// Text that runs past the last page pushes the page count up, using the
+  /// same margin the scroll rule in `_refreshCanvasViewport` applies.
+  void _growPagesForDocument() {
+    if (isRasterizing || isSaving || canvasPageHeight <= 0) return;
+    final bottom = _documentPageMargin +
+        _documentContentTop +
+        _layoutDocument().height +
+        _documentContentBottom;
+    var appended = false;
+    while (bottom > widget.note.pageCount * canvasPageHeight - 180) {
+      widget.note.pageCount += 1;
+      appended = true;
+    }
+    if (appended) setState(() {});
   }
 
   void move(PointerMoveEvent event) {
@@ -1143,7 +1111,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _canvasPointerDown(PointerDownEvent event) {
     canvasPointerPositions[event.pointer] = event.localPosition;
     if (canvasPointerPositions.length == 1) {
-      if (_activateTextAt(event.localPosition)) {
+      if (_activateDocument(event.localPosition)) {
         drawingPointer = null;
         return;
       }
@@ -1310,24 +1278,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
-    widget.note.text =
-        textControllers.isEmpty ? '' : textControllers.single.text;
-    widget.note.textFormat = textFormats.isEmpty
-        ? TextDocumentFormat()
-        : TextDocumentFormat(
-            bold: textFormats.single.bold,
-            color: textFormats.single.color,
-            fontSize: textFormats.single.fontSize,
-            styles: textFormats.single.styles
-                .map((style) => TextStyleRange(
-                      start: style.start,
-                      end: style.end,
-                      bold: style.bold,
-                      color: style.color,
-                      fontSize: style.fontSize,
-                    ))
-                .toList(),
-          );
+    widget.note.text = textController.text;
+    documentFormat.styles = textController.styles;
+    widget.note.textFormat = documentFormat.copy();
     widget.note.rasterTiles = await rasterDrawing.encode();
     widget.note.rasterPages.clear();
     widget.note.rasterWidth = rasterDrawing.width;
@@ -1914,8 +1867,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   Widget _textToolbar() {
-    final canFormat = textControllers.isNotEmpty;
-    final format = canFormat ? textFormats[activeTextIndex] : null;
     Widget slot(Widget child) => Expanded(child: Center(child: child));
     return SizedBox(
       key: const Key('text-toolbar'),
@@ -1930,14 +1881,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               onPressed: () => _selectTool(DrawTool.pen),
               icon: const Icon(Icons.gesture),
             ))),
-            slot(_toolbarIconFrame(IconButton(
-              tooltip: 'Add text block',
-              onPressed: addTextBlock,
-              icon: _DrawingToolIcon(DrawTool.text, size: 20),
-            ))),
             slot(_toolbarIconFrame(PopupMenuButton<String>(
               tooltip: 'Lists',
-              enabled: canFormat,
               icon: const Icon(Icons.check_box_outlined),
               onSelected: (value) {
                 if (value == 'check') _toggleLinePrefix('☐ ');
@@ -1973,21 +1918,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ))),
             slot(_toolbarIconFrame(PopupMenuButton<Color>(
               tooltip: 'Text colour',
-              enabled: canFormat,
               onSelected: _setTextColor,
               icon: Icon(
                 Icons.format_color_text,
-                color: format == null ? null : Color(format.color),
+                color: Color(documentFormat.color),
               ),
-              itemBuilder: (_) => _colorMenuItems(
-                format == null ? Colors.black : Color(format.color),
-              ),
+              itemBuilder: (_) => _colorMenuItems(Color(documentFormat.color)),
             ))),
             slot(_toolbarIconFrame(PopupMenuButton<double>(
               tooltip: 'Font size',
-              enabled: canFormat,
               icon: Text(
-                format == null ? 'Aa' : '${format.fontSize.round()}',
+                '${documentFormat.fontSize.round()}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               onSelected: _setTextFontSize,
@@ -2007,13 +1948,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             ))),
             slot(_toolbarIconFrame(IconButton(
               tooltip: 'Bold',
-              isSelected: format?.bold ?? false,
-              onPressed: canFormat ? _toggleTextBold : null,
+              isSelected: documentFormat.bold,
+              onPressed: _toggleTextBold,
               icon: const Icon(Icons.format_bold),
             ))),
             slot(_toolbarIconFrame(PopupMenuButton<bool>(
               tooltip: 'Indent',
-              enabled: canFormat,
               icon: const Icon(Icons.format_indent_increase),
               onSelected: _changeIndent,
               itemBuilder: (_) => const [
@@ -2082,211 +2022,41 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _canvasTextBlock(int index) {
-    final format = textFormats[index];
+  Widget _canvasTextDocument() {
     return Positioned(
-      key: ValueKey('canvas-text-block-$index'),
-      left: format.x,
-      top: format.y,
-      width: format.width,
-      height: format.height,
-      // Only the block being edited takes pointers; every other block leaves
-      // the canvas to decide, so a tap that misses the glyphs can draw.
+      key: const ValueKey('canvas-text-block-0'),
+      left: _documentPageMargin,
+      top: _documentPageMargin,
+      width: _documentColumnWidth,
+      // The document takes pointers only in text mode; every drawing tool
+      // leaves the canvas to decide, so a stroke can cross live text.
       child: IgnorePointer(
-        ignoring: !(tool == DrawTool.text && activeTextIndex == index),
-        child: Padding(
-          padding: const EdgeInsets.only(top: 28),
-          child: TextField(
-            key: ValueKey('canvas-text-field-$index'),
-            controller: textControllers[index],
-            focusNode: textFocusNodes[index],
-            onChanged: (_) => _growTextBlockToFit(index),
-            onTap: () {
-              setState(() {
-                activeTextIndex = index;
-                tool = DrawTool.text;
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _toggleChecklistAtSelection(index);
-              });
-            },
-            expands: true,
-            minLines: null,
-            maxLines: null,
-            keyboardType: TextInputType.multiline,
-            textAlignVertical: TextAlignVertical.top,
-            style: TextStyle(
-              color: Color(format.color),
-              fontSize: format.fontSize,
-              fontWeight: format.bold ? FontWeight.bold : FontWeight.normal,
-            ),
-            decoration: InputDecoration(
-              hintText: 'Text block ${index + 1}',
-              filled: false,
-              fillColor: Colors.transparent,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-            ),
+        ignoring: tool != DrawTool.text,
+        child: TextField(
+          key: const ValueKey('canvas-text-field-0'),
+          controller: textController,
+          focusNode: textFocusNode,
+          onChanged: (_) {
+            _growPagesForDocument();
+            _markChanged();
+          },
+          onTap: () => WidgetsBinding.instance
+              .addPostFrameCallback((_) => _toggleChecklistAtSelection()),
+          minLines: 1,
+          maxLines: null,
+          keyboardType: TextInputType.multiline,
+          textAlignVertical: TextAlignVertical.top,
+          style: _documentStyle,
+          decoration: const InputDecoration(
+            hintText: 'Text',
+            filled: false,
+            fillColor: Colors.transparent,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: EdgeInsets.fromLTRB(8, 4, 8, 8),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _canvasTextBlockControls(int index) {
-    final format = textFormats[index];
-    final selected = activeTextIndex == index && textFocusNodes[index].hasFocus;
-    final scale = math.max(0.001, canvasTransform.scale);
-    return Positioned(
-      key: ValueKey('canvas-text-block-controls-$index'),
-      left: format.x,
-      top: format.y,
-      width: format.width,
-      height: format.height,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.transparent,
-                  border: selected
-                      ? Border.all(color: Theme.of(context).colorScheme.primary)
-                      : null,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-            ),
-          ),
-          if (selected)
-            Positioned(
-              left: 0,
-              right: 56,
-              top: 0,
-              height: 28,
-              child: Listener(
-                key: ValueKey('move-text-block-$index'),
-                behavior: HitTestBehavior.opaque,
-                onPointerDown: (_) => setState(() {
-                  activeTextIndex = index;
-                  tool = DrawTool.text;
-                }),
-                onPointerMove: (event) => setState(() {
-                  format.x = math.max(0, format.x + event.delta.dx / scale);
-                  format.y = math.max(0, format.y + event.delta.dy / scale);
-                }),
-                onPointerUp: (_) => _markChanged(),
-                onPointerCancel: (_) => _markChanged(),
-                child: const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: EdgeInsets.only(left: 6),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: PenninoColors.leatherRaised,
-                        borderRadius: BorderRadius.all(Radius.circular(5)),
-                        border: Border.fromBorderSide(
-                          BorderSide(color: PenninoColors.gold),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black38,
-                            blurRadius: 3,
-                            offset: Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child: SizedBox(
-                        width: 28,
-                        height: 24,
-                        child: Icon(
-                          Icons.drag_indicator,
-                          size: 18,
-                          color: PenninoColors.paleGold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          if (selected)
-            Positioned(
-              right: 24,
-              top: 0,
-              width: 28,
-              height: 28,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: 'Delete text block',
-                onPressed: () => removeTextBlock(index),
-                icon: const Icon(Icons.close, size: 18),
-              ),
-            ),
-          if (selected)
-            Positioned(
-              right: 0,
-              bottom: 0,
-              width: 32,
-              height: 32,
-              child: Listener(
-                key: ValueKey('resize-text-block-$index'),
-                behavior: HitTestBehavior.opaque,
-                onPointerDown: (_) => setState(() {
-                  activeTextIndex = index;
-                  tool = DrawTool.text;
-                }),
-                onPointerMove: (event) => setState(() {
-                  format.width = math.max(
-                    140,
-                    format.width + event.delta.dx / scale,
-                  );
-                  format.height = math.max(
-                    90,
-                    format.height + event.delta.dy / scale,
-                  );
-                }),
-                onPointerUp: (_) {
-                  _growTextBlockToFit(index);
-                  _markChanged();
-                },
-                onPointerCancel: (_) {
-                  _growTextBlockToFit(index);
-                  _markChanged();
-                },
-                child: const Align(
-                  alignment: Alignment.bottomRight,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: PenninoColors.leatherRaised,
-                      borderRadius: BorderRadius.all(Radius.circular(5)),
-                      border: Border.fromBorderSide(
-                        BorderSide(color: PenninoColors.gold),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black38,
-                          blurRadius: 3,
-                          offset: Offset(0, 1),
-                        ),
-                      ],
-                    ),
-                    child: SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: Icon(
-                        Icons.open_in_full,
-                        size: 16,
-                        color: PenninoColors.paleGold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -2706,9 +2476,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
                                     onTapUp: tool == DrawTool.text
-                                        ? (details) => _createTextBlock(
-                                              position: details.localPosition,
-                                            )
+                                        ? (_) => _focusDocumentAtEnd()
                                         : null,
                                     child: CustomPaint(
                                       painter: StrokePainter(
@@ -2839,16 +2607,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ],
-                                if (showText)
-                                  for (var index = 0;
-                                      index < textControllers.length;
-                                      index++)
-                                    _canvasTextBlock(index),
-                                if (showText)
-                                  for (var index = 0;
-                                      index < textControllers.length;
-                                      index++)
-                                    _canvasTextBlockControls(index),
+                                if (showText) _canvasTextDocument(),
                               ],
                             ),
                           ),
