@@ -153,6 +153,11 @@ class UpdateService {
     }
   }
 
+  static Future<Directory> createDownloadDirectory(
+    Directory temporaryDirectory,
+  ) =>
+      temporaryDirectory.createTemp('pennino-update-');
+
   static Future<void> prompt(
     BuildContext context, {
     bool automatic = false,
@@ -214,15 +219,18 @@ class UpdateService {
         throw HttpException('Download failed (${response.statusCode})');
       }
       final directory = await getTemporaryDirectory();
+      // A previous Windows installer can keep its executable locked after the
+      // app exits. Give every attempt its own directory so that lock cannot
+      // prevent a later download from being installed.
+      final downloadDirectory = await createDownloadDirectory(directory);
       final partialFile = File(
-        '${directory.path}${Platform.pathSeparator}${availableUpdate.fileName}.download',
+        '${downloadDirectory.path}${Platform.pathSeparator}${availableUpdate.fileName}.download',
       );
       final file = File(
-        '${directory.path}${Platform.pathSeparator}${availableUpdate.fileName}',
+        '${downloadDirectory.path}${Platform.pathSeparator}${availableUpdate.fileName}',
       );
       await response.pipe(partialFile.openWrite());
       await verifyDownload(partialFile, availableUpdate.sha256);
-      if (await file.exists()) await file.delete();
       await partialFile.rename(file.path);
       if (Platform.isAndroid) {
         await _channel.invokeMethod('install', {'path': file.path});
