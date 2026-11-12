@@ -1213,4 +1213,23 @@ void main() {
     expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
     expect(textBlockFocused(tester), isTrue);
   });
+
+  testWidgets('tapping a checklist mark toggles it on the first tap',
+      (tester) async {
+    await openNoteWithTextBlock(tester, '☐ Milk');
+
+    await tester.tapAt(blockTopLeft(tester) + const Offset(16, 44));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('canvas-text-field-0')),
+          )
+          .controller!
+          .text,
+      '☑ Milk',
+    );
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+  });
 }

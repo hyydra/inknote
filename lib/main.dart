@@ -1000,7 +1000,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return false;
   }
 
-  int? _textBlockAtViewport(Offset viewportPoint) {
+  /// The text block that owns [viewportPoint], with the point in that block's
+  /// text coordinates. Only points on a line of glyphs count; the rest of a
+  /// written block is paper.
+  (int index, Offset textLocal)? _textBlockHitAt(Offset viewportPoint) {
     if (!showText) return null;
     final scenePoint = canvasTransform.sceneFromViewport(
       CanvasPoint(viewportPoint.dx, viewportPoint.dy),
@@ -1013,25 +1016,25 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           scenePoint.y > format.y + format.height) {
         continue;
       }
-      // A block with no text yet is opened by a tap anywhere in its frame;
-      // a written block only answers taps that land on a line of glyphs.
-      if (textControllers[index].text.isEmpty) return index;
-      if (_pointHitsTextLine(
-        index,
-        Offset(
-          scenePoint.x - (format.x + _textContentLeft),
-          scenePoint.y - (format.y + _textContentTop),
-        ),
-      )) {
-        return index;
-      }
+      final textLocal = Offset(
+        scenePoint.x - (format.x + _textContentLeft),
+        scenePoint.y - (format.y + _textContentTop),
+      );
+      // A block with no text yet opens on a tap anywhere in its frame.
+      if (textControllers[index].text.isEmpty) return (index, textLocal);
+      if (_pointHitsTextLine(index, textLocal)) return (index, textLocal);
     }
     return null;
   }
 
   bool _activateTextAt(Offset viewportPoint) {
-    final index = _textBlockAtViewport(viewportPoint);
-    if (index == null) return false;
+    final hit = _textBlockHitAt(viewportPoint);
+    if (hit == null) return false;
+    final index = hit.$1;
+    // While the block is being edited its own field handles the pointer,
+    // including caret and selection; otherwise the canvas has to place the
+    // caret where the tap landed.
+    final fieldOwnedPointer = tool == DrawTool.text && activeTextIndex == index;
     setState(() {
       active = null;
       activeEraser = null;
@@ -1039,9 +1042,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       tool = DrawTool.text;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && index < textFocusNodes.length) {
-        textFocusNodes[index].requestFocus();
+      if (!mounted || index >= textFocusNodes.length) return;
+      if (!fieldOwnedPointer) {
+        textControllers[index].selection = TextSelection.collapsed(
+          offset: _layoutTextBlock(index).getPositionForOffset(hit.$2).offset,
+        );
+        // The field never saw this pointer, so its tap handler - which is what
+        // toggles an inline checklist mark - has to run from here.
+        _toggleChecklistAtSelection(index);
       }
+      textFocusNodes[index].requestFocus();
     });
     return true;
   }
