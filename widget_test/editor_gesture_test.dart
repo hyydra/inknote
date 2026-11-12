@@ -623,7 +623,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Eraser'));
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('canvas-text-field-0')));
+    // Tap on the glyphs: the empty area below the line is paper now.
+    await tester.tapAt(
+      tester.getTopLeft(find.byKey(const ValueKey('canvas-text-block-0'))) +
+          const Offset(40, 44),
+    );
     await tester.pump();
 
     expect(note.strokes, isEmpty);
@@ -1103,5 +1107,110 @@ void main() {
       ),
     );
     expectUpdateTextContrast();
+  });
+
+  Future<void> openNoteWithTextBlock(WidgetTester tester, String text) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add text block'));
+    await tester.pumpAndSettle();
+    if (text.isNotEmpty) {
+      await tester.enterText(
+        find.byKey(const ValueKey('canvas-text-field-0')),
+        text,
+      );
+      await tester.pumpAndSettle();
+    }
+    // Leave editing so the next tap has to be decided by the canvas.
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Pen'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+  }
+
+  Offset blockTopLeft(WidgetTester tester) => tester.getTopLeft(
+        find.byKey(const ValueKey('canvas-text-block-0')),
+      );
+
+  Size blockSize(WidgetTester tester) => tester.getSize(
+        find.byKey(const ValueKey('canvas-text-block-0')),
+      );
+
+  bool textBlockFocused(WidgetTester tester) =>
+      tester.widget<TextField>(
+        find.byKey(const ValueKey('canvas-text-field-0')),
+      ).focusNode!.hasFocus;
+
+  testWidgets('tapping a letter opens the text block for editing',
+      (tester) async {
+    await openNoteWithTextBlock(tester, 'Hello');
+
+    await tester.tapAt(blockTopLeft(tester) + const Offset(16, 44));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(textBlockFocused(tester), isTrue);
+    expect(painterHasPage(rasterPainter(tester), 0), isFalse);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('canvas-text-field-0')),
+          )
+          .controller!
+          .text,
+      'Hello',
+    );
+  });
+
+  testWidgets('tapping past the end of a line draws instead of editing text',
+      (tester) async {
+    await openNoteWithTextBlock(tester, 'Hello');
+    final size = blockSize(tester);
+
+    await tester.dragFrom(
+      blockTopLeft(tester) + Offset(size.width - 20, 44),
+      const Offset(0, 30),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+    expect(textBlockFocused(tester), isFalse);
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
+  });
+
+  testWidgets('tapping the blank padding under the text draws instead of '
+      'editing text', (tester) async {
+    await openNoteWithTextBlock(tester, 'Hello');
+    final size = blockSize(tester);
+
+    await tester.dragFrom(
+      blockTopLeft(tester) + Offset(60, size.height - 16),
+      const Offset(0, 24),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('text-toolbar')), findsNothing);
+    expect(textBlockFocused(tester), isFalse);
+    expect(painterHasPage(rasterPainter(tester), 0), isTrue);
+  });
+
+  testWidgets('tapping an empty text block still opens it for editing',
+      (tester) async {
+    await openNoteWithTextBlock(tester, '');
+    final size = blockSize(tester);
+
+    await tester.tapAt(blockTopLeft(tester) + Offset(60, size.height - 40));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('text-toolbar')), findsOneWidget);
+    expect(textBlockFocused(tester), isTrue);
   });
 }

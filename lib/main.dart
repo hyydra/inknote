@@ -723,14 +723,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _growTextBlockToFit(int index) {
     if (index < 0 || index >= textControllers.length) return;
     final format = textFormats[index];
-    final painter = TextPainter(
-      text: textControllers[index].buildTextSpan(
-        context: context,
-        withComposing: false,
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout(maxWidth: math.max(1, format.width - 16));
+    final painter = _layoutTextBlock(index);
     final requiredHeight = math.max(90.0, painter.height + 48);
     if (requiredHeight <= format.height) return;
     setState(() => format.height = requiredHeight);
@@ -975,6 +968,38 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     });
   }
 
+  static const double _textContentLeft = 8;
+  static const double _textContentTop = 32;
+  static const double _textContentWidthInset = 16;
+
+  TextPainter _layoutTextBlock(int index) {
+    final format = textFormats[index];
+    return TextPainter(
+      text: textControllers[index].buildTextSpan(
+        context: context,
+        withComposing: false,
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: math.max(1, format.width - _textContentWidthInset));
+  }
+
+  /// True when [textLocal], measured from the first glyph of the block, falls
+  /// inside one of the laid-out line boxes.
+  bool _pointHitsTextLine(int index, Offset textLocal) {
+    if (textLocal.dx < 0 || textLocal.dy < 0) return false;
+    var lineTop = 0.0;
+    for (final line in _layoutTextBlock(index).computeLineMetrics()) {
+      final lineBottom = lineTop + line.height;
+      if (textLocal.dy <= lineBottom) {
+        return textLocal.dx >= line.left &&
+            textLocal.dx <= line.left + line.width;
+      }
+      lineTop = lineBottom;
+    }
+    return false;
+  }
+
   int? _textBlockAtViewport(Offset viewportPoint) {
     if (!showText) return null;
     final scenePoint = canvasTransform.sceneFromViewport(
@@ -982,10 +1007,22 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
     for (var index = textFormats.length - 1; index >= 0; index--) {
       final format = textFormats[index];
-      if (scenePoint.x >= format.x &&
-          scenePoint.x <= format.x + format.width &&
-          scenePoint.y >= format.y &&
-          scenePoint.y <= format.y + format.height) {
+      if (scenePoint.x < format.x ||
+          scenePoint.x > format.x + format.width ||
+          scenePoint.y < format.y ||
+          scenePoint.y > format.y + format.height) {
+        continue;
+      }
+      // A block with no text yet is opened by a tap anywhere in its frame;
+      // a written block only answers taps that land on a line of glyphs.
+      if (textControllers[index].text.isEmpty) return index;
+      if (_pointHitsTextLine(
+        index,
+        Offset(
+          scenePoint.x - (format.x + _textContentLeft),
+          scenePoint.y - (format.y + _textContentTop),
+        ),
+      )) {
         return index;
       }
     }
@@ -2045,12 +2082,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       top: format.y,
       width: format.width,
       height: format.height,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() {
-          activeTextIndex = index;
-          tool = DrawTool.text;
-        }),
+      // Only the block being edited takes pointers; every other block leaves
+      // the canvas to decide, so a tap that misses the glyphs can draw.
+      child: IgnorePointer(
+        ignoring: !(tool == DrawTool.text && activeTextIndex == index),
         child: Padding(
           padding: const EdgeInsets.only(top: 28),
           child: TextField(
