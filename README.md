@@ -6,7 +6,7 @@ Handwriting-first, local-first notes for Android and Windows.
 [![Build Pennino](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml/badge.svg)](https://github.com/hyydra/pennino/actions/workflows/android-apk.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Pennino is a lightweight handwritten-notes application with a zoomable canvas, multiple typed-text blocks, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
+Pennino is a lightweight handwritten-notes application with a zoomable canvas, one typed text document, checklists and resilient local storage. Notes remain under your control as portable JSON files; Android and Windows users can optionally synchronize them through a selected Google Drive folder.
 
 Android and Windows are supported release platforms. Linux support is experimental and verified by continuous integration, but no packaged Linux download is published yet.
 
@@ -27,8 +27,8 @@ Windows may show a SmartScreen warning because the installer is not yet code-sig
 - On Android, the cloud-sync button selects a writable Google Drive location through the system folder picker. On Windows, it selects a Google Drive for Desktop root. Pennino then uses the same visible `Pennino/notes` folder on every device, imports legacy JSON files from the previously selected root, and automatically performs a two-way sync at startup and after each save. Matching note IDs are resolved by their latest update timestamp without requiring a Google Cloud API key.
 - Versioned JSON persistence in the local application documents `Pennino/notes` folder, with automatic migration from the former `notes` folder, atomic replacement, a previous-version backup and recovery after interrupted writes.
 - Background local autosave for every editor change with stable toolbar feedback; the UI changes only when saving actually fails.
-- Multiple independently editable text blocks placed directly on the canvas. Blocks have transparent backgrounds, receive focus immediately when added, and can be moved or resized with persistent handles; inactive borders remain hidden.
-- Fixed, non-scrolling bottom drawing and text toolbars keep an icon toolbar on screen on Android and Windows. Drawing and text colours use compact dropdown palettes. Text controls include icon-labelled lists, font size, bold and indentation, and character selections retain their own bold, colour and size formatting. Tapping a text block always returns to text mode before a drawing tool can affect it.
+- One typed text document per note, laid out as a fixed column at the top of the page that grows downward and appends pages as you write. Formatting - bold, colour, size and indentation - applies to the selection or to the document default, and character selections keep their own formatting.
+- Fixed, non-scrolling bottom drawing and text toolbars keep an icon toolbar on screen on Android and Windows. Drawing and text colours use compact dropdown palettes. Text controls include icon-labelled lists, font size, bold and indentation, and character selections retain their own bold, colour and size formatting. Tapping a letter returns to text mode with the caret where you tapped; tapping blank paper keeps drawing, and a tap on paper in text mode puts the caret at the end of the document.
 - A graphite, black-leather and champagne-gold interface inspired by late-1990s business organizers, with matching Android and Windows launcher icons.
 - Android native widget displaying a rendered preview of the *last note explicitly pinned* from the editor. The widget can be resized horizontally and vertically from a compact card to a page-sized view. This is not yet a per-widget note selector.
 - Responsive Flutter UI shared by Android and Windows, with experimental Linux support.
