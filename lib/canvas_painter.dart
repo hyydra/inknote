@@ -215,3 +215,17 @@ class BlurStrokeClipper extends CustomClipper<Path> {
       !identical(stroke, oldClipper.stroke) ||
       widthScale != oldClipper.widthScale;
 }
+
+/// Eraser feather ramp as (widthScale, opacity), widest and faintest first.
+/// The widths and opacities match the blur preview's ramp, so erasing fades
+/// out over the same band that blurring softens.
+const List<(double, double)> strokeFeatherPasses = [
+  (2.20, 0.06),
+  (1.85, 0.09),
+  (1.55, 0.13),
+  (1.30, 0.19),
+  (1.08, 0.27),
+  (0.88, 0.38),
+  (0.70, 0.54),
+  (0.52, 1.00),
+];
