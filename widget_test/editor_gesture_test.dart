@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
@@ -83,6 +84,50 @@ double contrastRatio(Color foreground, Color background) {
 }
 
 int alphaOf(Color color) => color.toARGB32() >> 24;
+
+/// Counts pixels darker than anything the bare paper produces, and reports
+/// where they are. The lightest paper pixel measured in a blank preview sums
+/// to 719 across RGB, so 700 is an ink threshold the paper never crosses.
+Future<(int, Rect)> previewInk(WidgetTester tester, Uint8List png) async {
+  final result = await tester.runAsync(() async {
+    final codec = await ui.instantiateImageCodec(png);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (data == null) throw StateError('Preview could not be read');
+    var ink = 0;
+    var minX = image.width;
+    var minY = image.height;
+    var maxX = -1;
+    var maxY = -1;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = 0; x < image.width; x++) {
+        final i = (y * image.width + x) * 4;
+        if (data.getUint8(i) + data.getUint8(i + 1) + data.getUint8(i + 2) <
+            700) {
+          ink++;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    final bounds = ink == 0
+        ? Rect.zero
+        : Rect.fromLTRB(
+            minX.toDouble(),
+            minY.toDouble(),
+            maxX.toDouble(),
+            maxY.toDouble(),
+          );
+    image.dispose();
+    codec.dispose();
+    return (ink, bounds);
+  });
+  if (result == null) throw StateError('Preview pixels could not be read');
+  return result;
+}
 
 void main() {
   Future<void> openNoteWithText(WidgetTester tester, String text) async {
@@ -599,6 +644,87 @@ void main() {
     expect(alphaOf(pixel), 0);
     expect(note.text, 'Keep this text');
     expect(find.text('Keep this text'), findsOneWidget);
+  });
+
+  testWidgets('eraser previews as a feathered paper overlay while dragging',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'eraser-feather-note',
+      title: 'Eraser feather',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(600, 350), CanvasPoint(700, 350)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Eraser'));
+    await tester.pump();
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final gesture = await tester.startGesture(origin + const Offset(620, 350));
+    await tester.pump();
+    await gesture.moveBy(const Offset(40, 0));
+    await tester.pump();
+
+    expect(find.byKey(const Key('active-erase-layer')), findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('active-erase-layer')), findsNothing);
+  });
+
+  testWidgets('the home widget preview shows the typed document',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: emptyNote()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state(find.byType(EditorPage)) as dynamic;
+    final blank = await tester
+        .runAsync(() => state.renderPreview() as Future<Uint8List>);
+    if (blank == null) throw StateError('Blank preview did not render');
+    expect((await previewInk(tester, blank)).$1, 0);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Text'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'Hello widget preview',
+    );
+    await tester.pumpAndSettle();
+    expect(documentText(tester), 'Hello widget preview');
+
+    final typed = await tester
+        .runAsync(() => state.renderPreview() as Future<Uint8List>);
+    if (typed == null) throw StateError('Typed preview did not render');
+    final ink = await previewInk(tester, typed);
+    expect(ink.$1, greaterThan(0));
+    expect(typed, isNot(equals(blank)));
+    // The document starts at canvas (56, 52) on a 2000x1200 page, so at the
+    // preview's 0.35 scale its ink belongs near (20, 18). Painting without
+    // that scale would leave it at (56, 52) and twice as tall.
+    expect(ink.$2.left, lessThan(40));
+    expect(ink.$2.top, lessThan(40));
+    expect(ink.$2.bottom, lessThan(60));
   });
 
   testWidgets('text wins over every drawing tool when tapped', (tester) async {

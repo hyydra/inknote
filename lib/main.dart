@@ -1472,6 +1472,26 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       );
       canvas.restore();
     }
+    // The document lives in canvas coordinates, so it takes the page's own
+    // scale rather than the raster's; without it a typed note pins as blank
+    // paper.
+    final document = _layoutDocument();
+    if (document.width > 0 && document.height > 0) {
+      canvas.save();
+      canvas.scale(
+        size.width / math.max(1, canvasWidth),
+        size.height / math.max(1, canvasPageHeight),
+      );
+      document.paint(
+        canvas,
+        Offset(
+          _documentPageMargin + _textContentLeft,
+          _documentPageMargin + _documentContentTop,
+        ),
+      );
+      canvas.restore();
+    }
+    document.dispose();
     final picture = recorder.endRecording();
     final image = await picture.toImage(
       size.width.toInt(),
@@ -2061,6 +2081,49 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
+  /// The eraser's live preview: blur's feather ramp, but every pass lays down
+  /// paper instead of blurred content, so the mark fades out to bare paper.
+  Widget _eraseStrokeLayer(Stroke stroke, {Key? key}) {
+    final paperPattern = PaperPattern.values.firstWhere(
+      (item) => item.name == widget.note.backgroundPattern,
+      orElse: () => PaperPattern.lined,
+    );
+    return Positioned.fill(
+      key: key,
+      child: IgnorePointer(
+        child: RepaintBoundary(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              for (var index = 0; index < strokeFeatherPasses.length; index++)
+                Opacity(
+                  opacity: strokeFeatherPasses[index].$2,
+                  child: ClipPath(
+                    clipBehavior: Clip.antiAlias,
+                    clipper: BlurStrokeClipper(
+                      stroke,
+                      widthScale: strokeFeatherPasses[index].$1,
+                      reclip: canvasRepaint,
+                    ),
+                    child: CustomPaint(
+                      key: ValueKey('erase-paper-$index'),
+                      painter: StrokePainter(
+                        const [],
+                        null,
+                        background: Color(widget.note.backgroundColor),
+                        pattern: paperPattern,
+                        paintStrokes: false,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _blurStrokeLayer(
     Stroke stroke, {
     required List<Stroke> priorStrokes,
@@ -2507,7 +2570,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                             active == null || active!.blur
                                                 ? null
                                                 : activePreview,
-                                        activeEraser: activeEraser,
                                         repaint: canvasRepaint,
                                       ),
                                     ),
@@ -2538,6 +2600,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                         .toList(),
                                     layerIndex: widget.note.strokes.length,
                                     key: const Key('active-blur-layer'),
+                                  ),
+                                if (activeEraser != null)
+                                  _eraseStrokeLayer(
+                                    activeEraser!,
+                                    key: const Key('active-erase-layer'),
                                   ),
                                 if (!rasterImagesLoaded || isRasterizing)
                                   Positioned(
