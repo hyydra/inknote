@@ -276,13 +276,20 @@ class DriveSyncService {
       }
     }
 
-    final files = <String, String>{
+    final encoded = <String, String>{
       for (final item in merged.values)
         '${item.id}.json': jsonEncode(item.toJson()),
     };
-    await selectedBackend.writeFiles(files);
+    // A note's payload embeds its whole drawing as base64, so re-uploading
+    // every note after every save is the dominant sync cost. Both backends
+    // merge into the folder, so omitting an entry leaves that file alone.
+    final pending = <String, String>{
+      for (final entry in encoded.entries)
+        if (remoteRaw[entry.key] != entry.value) entry.key: entry.value,
+    };
+    if (pending.isNotEmpty) await selectedBackend.writeFiles(pending);
     return DriveSyncResult(
-      noteCount: files.length,
+      noteCount: merged.length,
       currentNote: currentNoteId == null ? null : merged[currentNoteId],
     );
   }
