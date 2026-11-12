@@ -313,7 +313,7 @@ void main() {
     final note = Note(
       id: 'legacy-raster-note',
       title: 'Legacy raster note',
-      textBlocks: const ['Text stays above the drawing'],
+      text: 'Text stays above the drawing',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [
         noteWithStroke().strokes.single,
@@ -567,7 +567,7 @@ void main() {
     final note = Note(
       id: 'eraser-text-note',
       title: 'Eraser text',
-      textBlocks: const ['Keep this text'],
+      text: 'Keep this text',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [
         Stroke(
@@ -600,7 +600,7 @@ void main() {
       350,
     );
     expect(alphaOf(pixel), 0);
-    expect(note.textBlocks.single, 'Keep this text');
+    expect(note.text, 'Keep this text');
     expect(find.text('Keep this text'), findsOneWidget);
   });
 
@@ -610,7 +610,7 @@ void main() {
     final note = Note(
       id: 'text-first-note',
       title: 'Text first',
-      textBlocks: const ['Always editable'],
+      text: 'Always editable',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [],
     );
@@ -819,7 +819,7 @@ void main() {
     final note = Note(
       id: 'ordered-layers',
       title: 'Ordered layers',
-      textBlocks: const ['Sharp text'],
+      text: 'Sharp text',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [
         Stroke(
@@ -901,7 +901,7 @@ void main() {
     final note = Note(
       id: 'rich-text-note',
       title: 'Rich text',
-      textBlocks: const ['gold ink'],
+      text: 'gold ink',
       updated: DateTime.utc(2026, 11, 10),
       strokes: [],
     );
@@ -922,7 +922,7 @@ void main() {
     await tester.tap(find.byTooltip('Bold'));
     await tester.pump();
 
-    expect(note.textBlockFormats.first.bold, isFalse);
+    expect(note.textFormat.bold, isFalse);
     expect(controller.styles.single.start, 0);
     expect(controller.styles.single.end, 4);
     expect(controller.styles.single.bold, isTrue);
@@ -977,7 +977,7 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final note = emptyNote()..textBlocks.add('Typed note');
+    final note = emptyNote()..text = 'Typed note';
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(platform: TargetPlatform.android),

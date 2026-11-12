@@ -480,10 +480,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     taskController = TextEditingController();
     applyingExternalChange = true;
     try {
-      textBlockController.replace(
-        widget.note.textBlocks,
-        formats: widget.note.textBlockFormats,
-      );
+      _loadDocumentIntoEditor(widget.note.text, widget.note.textFormat);
     } finally {
       applyingExternalChange = false;
     }
@@ -718,6 +715,30 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       tool = nextTool;
       if (tool == DrawTool.text) showText = true;
     });
+  }
+
+  void _loadDocumentIntoEditor(String text, TextDocumentFormat format) {
+    textBlockController.replace(
+      text.isEmpty ? const <String>[] : [text],
+      formats: text.isEmpty
+          ? const <TextBlockFormat>[]
+          : [
+              TextBlockFormat(
+                bold: format.bold,
+                color: format.color,
+                fontSize: format.fontSize,
+                styles: format.styles
+                    .map((style) => TextStyleRange(
+                          start: style.start,
+                          end: style.end,
+                          bold: style.bold,
+                          color: style.color,
+                          fontSize: style.fontSize,
+                        ))
+                    .toList(),
+              ),
+            ],
+    );
   }
 
   void _growTextBlockToFit(int index) {
@@ -1289,28 +1310,24 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     widget.note.title = titleController.text.trim().isEmpty
         ? 'Untitled note'
         : titleController.text.trim();
-    widget.note.textBlocks =
-        textControllers.map((controller) => controller.text).toList();
-    widget.note.textBlockFormats = textFormats
-        .map((format) => TextBlockFormat(
-              bold: format.bold,
-              color: format.color,
-              fontSize: format.fontSize,
-              x: format.x,
-              y: format.y,
-              width: format.width,
-              height: format.height,
-              styles: format.styles
-                  .map((style) => TextStyleRange(
-                        start: style.start,
-                        end: style.end,
-                        bold: style.bold,
-                        color: style.color,
-                        fontSize: style.fontSize,
-                      ))
-                  .toList(),
-            ))
-        .toList();
+    widget.note.text =
+        textControllers.isEmpty ? '' : textControllers.single.text;
+    widget.note.textFormat = textFormats.isEmpty
+        ? TextDocumentFormat()
+        : TextDocumentFormat(
+            bold: textFormats.single.bold,
+            color: textFormats.single.color,
+            fontSize: textFormats.single.fontSize,
+            styles: textFormats.single.styles
+                .map((style) => TextStyleRange(
+                      start: style.start,
+                      end: style.end,
+                      bold: style.bold,
+                      color: style.color,
+                      fontSize: style.fontSize,
+                    ))
+                .toList(),
+          );
     widget.note.rasterTiles = await rasterDrawing.encode();
     widget.note.rasterPages.clear();
     widget.note.rasterWidth = rasterDrawing.width;
@@ -1669,27 +1686,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         rasterImageError = null;
         legacyRasterizationScheduled = false;
         widget.note.title = syncedCurrent.title;
-        widget.note.textBlocks = List.of(syncedCurrent.textBlocks);
-        widget.note.textBlockFormats = syncedCurrent.textBlockFormats
-            .map((format) => TextBlockFormat(
-                  bold: format.bold,
-                  color: format.color,
-                  fontSize: format.fontSize,
-                  x: format.x,
-                  y: format.y,
-                  width: format.width,
-                  height: format.height,
-                  styles: format.styles
-                      .map((style) => TextStyleRange(
-                            start: style.start,
-                            end: style.end,
-                            bold: style.bold,
-                            color: style.color,
-                            fontSize: style.fontSize,
-                          ))
-                      .toList(),
-                ))
-            .toList();
+        widget.note.text = syncedCurrent.text;
+        widget.note.textFormat = syncedCurrent.textFormat.copy();
         widget.note.updated = syncedCurrent.updated;
         widget.note.strokes = List.of(syncedCurrent.strokes);
         widget.note.tasks = syncedCurrent.tasks;
@@ -1708,9 +1706,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         saveFailed = false;
         rasterMigrationOnlyDirty = false;
         titleController.text = syncedCurrent.title;
-        textBlockController.replace(
-          syncedCurrent.textBlocks,
-          formats: syncedCurrent.textBlockFormats,
+        _loadDocumentIntoEditor(
+          syncedCurrent.text,
+          syncedCurrent.textFormat,
         );
       });
     } finally {
