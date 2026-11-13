@@ -422,6 +422,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   int _editRevision = 0;
   Future<void>? _saveOperation;
   final Map<int, Offset> canvasPointerPositions = {};
+
+  /// Pointer positions at the start of the current pinch frame, and the
+  /// pointers that have reported a movement in it. See [_trackPinchRound].
+  Map<int, Offset>? pinchRoundStart;
+  final Set<int> pinchRoundMoved = {};
   int? drawingPointer;
   Offset? lastSampleViewportPosition;
   double canvasViewportHeight = 0;
@@ -851,7 +856,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   CanvasTransform get canvasTransform {
     final matrix = transformationController.value;
     return CanvasTransform(
-      scale: matrix.getMaxScaleOnAxis(),
+      // getMaxScaleOnAxis also measures the untouched Z basis vector, so it
+      // reports 1 for every zoom out of this 2D canvas. That made pen input and
+      // the pinch gesture treat a zoomed-out page as unscaled. The canvas only
+      // ever builds a uniform 2D scale, held by the X basis vector.
+      scale: matrix.storage[0].abs(),
       translationX: matrix.storage[12],
       translationY: matrix.storage[13],
     );
@@ -1110,6 +1119,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   void _canvasPointerDown(PointerDownEvent event) {
     canvasPointerPositions[event.pointer] = event.localPosition;
+    pinchRoundStart = null;
+    pinchRoundMoved.clear();
     if (canvasPointerPositions.length == 1) {
       if (_activateDocument(event.localPosition)) {
         drawingPointer = null;
@@ -1134,6 +1145,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _canvasPointerMove(PointerMoveEvent event) {
     final previousPosition = canvasPointerPositions[event.pointer];
     if (previousPosition == null) return;
+    final beforeUpdate = Map.of(canvasPointerPositions);
     canvasPointerPositions[event.pointer] = event.localPosition;
     if (canvasPointerPositions.length >= 2) {
       final pointers = canvasPointerPositions.keys.take(2).toList();
@@ -1166,15 +1178,64 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       next[12] = currentCenter.dx - sceneX * nextScale;
       next[13] = currentCenter.dy - sceneY * nextScale;
       transformationController.value = next;
-      _refreshCanvasViewport(
-        userScrolledDown: currentCenter.dy < previousCenter.dy - 0.5,
-      );
+      _trackPinchRound(beforeUpdate, event.pointer);
       return;
     }
     if (drawingPointer == event.pointer) move(event);
   }
 
+  /// Collects the pointer events of one pinch frame, and reports whether that
+  /// frame scrolled the canvas.
+  ///
+  /// The platform delivers a two-finger movement one pointer at a time, so a
+  /// single event always changes the distance between the fingers sharply even
+  /// when the whole hand only translates. Measuring over a full round, one
+  /// event per finger, is what separates a pan from a spread: a pan returns the
+  /// distance to where it started, a zoom does not. Without this, the upward
+  /// drift of a rotating hand read as a scroll and appended a page in the
+  /// middle of a zoom.
+  void _trackPinchRound(Map<int, Offset> beforeUpdate, int pointer) {
+    final active = canvasPointerPositions.keys.toList();
+    var start = pinchRoundStart;
+    // Set has identity equality, so membership is compared key by key: a round
+    // only continues while exactly the same fingers are still down.
+    if (start == null ||
+        start.length != active.length ||
+        !active.every(start.containsKey)) {
+      start = beforeUpdate;
+      pinchRoundStart = start;
+      pinchRoundMoved.clear();
+    }
+    pinchRoundMoved.add(pointer);
+    if (pinchRoundMoved.length < active.length) return;
+    pinchRoundStart = null;
+    pinchRoundMoved.clear();
+
+    final ids = active.take(2).toList();
+    final startFirst = start[ids[0]];
+    final startSecond = start[ids[1]];
+    final currentFirst = canvasPointerPositions[ids[0]];
+    final currentSecond = canvasPointerPositions[ids[1]];
+    if (startFirst == null ||
+        startSecond == null ||
+        currentFirst == null ||
+        currentSecond == null) {
+      return;
+    }
+    final centreDelta =
+        (currentFirst + currentSecond) / 2 - (startFirst + startSecond) / 2;
+    final spreadDelta =
+        (currentFirst - currentSecond).distance -
+        (startFirst - startSecond).distance;
+    _refreshCanvasViewport(
+      userScrolledDown: centreDelta.dy < -2 &&
+          centreDelta.distance >= spreadDelta.abs(),
+    );
+  }
+
   void _canvasPointerEnd(PointerEvent event) {
+    pinchRoundStart = null;
+    pinchRoundMoved.clear();
     if (drawingPointer == event.pointer && canvasPointerPositions.length == 1) {
       end(event);
     }

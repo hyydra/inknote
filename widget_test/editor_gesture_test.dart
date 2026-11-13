@@ -550,6 +550,59 @@ void main() {
     await second.up();
   });
 
+  testWidgets('a drifting pinch zoom appends no page while a pan still can',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final viewerFinder = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(viewerFinder);
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Parking the canvas at the bottom of the only page is what makes an
+    // appended page observable: the viewport already reaches the end, so every
+    // gesture read as a scroll grows the document by exactly one page.
+    editor.transformationController.value =
+        Matrix4.translationValues(0, -600, 0);
+    await tester.pump();
+    final matrix = editor.transformationController.value;
+    expect(
+      (editor.canvasViewportHeight - matrix.storage[13]) / matrix.storage[0],
+      greaterThanOrEqualTo(note.pageCount * editor.canvasPageHeight - 180),
+      reason: 'the bottom of the document is in view before the pinch',
+    );
+
+    final first = await tester.createGesture(pointer: 1);
+    final second = await tester.createGesture(pointer: 2);
+    await first.down(origin + const Offset(180, 180));
+    await second.down(origin + const Offset(280, 280));
+
+    // Zooming out moves the fingers towards each other while a hand that
+    // rotates drifts the pinch centre upwards. That drift is not a scroll, so
+    // the end of the document must not grow.
+    await first.moveTo(origin + const Offset(190, 190));
+    await second.moveTo(origin + const Offset(210, 205));
+    await tester.pump();
+
+    expect(note.pageCount, 1, reason: 'zooming must never create a page');
+
+    // The same two fingers moving together by a hundred pixels are a scroll,
+    // and reaching the end still appends exactly one page.
+    await first.moveTo(origin + const Offset(190, 90));
+    await second.moveTo(origin + const Offset(210, 105));
+    await tester.pump();
+
+    expect(note.pageCount, 2, reason: 'a two finger pan still scrolls');
+    await first.up();
+    await second.up();
+  });
+
   testWidgets('only downward scrolling appends one vertically marked page',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
