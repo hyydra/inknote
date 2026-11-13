@@ -7,32 +7,97 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
 import 'note_data.dart';
+import 'note_storage.dart';
 import 'note_store.dart';
 
 const _appFolderName = 'Pennino';
 const _notesFolderName = 'notes';
 
-List<Note> _decodeRemoteNotes(List<String> payloads) {
-  final notes = <Note>[];
-  for (final content in payloads) {
-    try {
-      notes.add(
-        Note.fromJson(
-          Map<String, dynamic>.from(jsonDecode(content) as Map),
-        ),
-      );
-    } catch (_) {
-      // Unrelated or damaged JSON files are left untouched for recovery.
-    }
-  }
+/// Mirrors `NoteStore._safeNoteId`. A remote payload whose id fails this check
+/// can never be stored, so it is skipped instead of aborting the whole sync.
+final RegExp _safeNoteId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+/// A note payload as it was found in the folder. The file name is kept because
+/// it is not always `<id>.json`: Drive writes conflict copies such as
+/// `note (1).json`, and removing a stale payload has to name the real file.
+class _RemoteNote {
+  final String name;
+  final Note note;
+
+  const _RemoteNote(this.name, this.note);
+}
+
+List<_RemoteNote> _decodeRemoteNotes(Map<String, String> payloads) {
+  final notes = <_RemoteNote>[];
+  payloads.forEach((name, content) {
+    final note = _decodeNote(content);
+    if (note != null) notes.add(_RemoteNote(name, note));
+  });
   return notes;
 }
 
+Note? _decodeNote(String content) {
+  try {
+    final note = Note.fromJson(
+      Map<String, dynamic>.from(jsonDecode(content) as Map),
+    );
+    return _safeNoteId.hasMatch(note.id) ? note : null;
+  } catch (_) {
+    // Unrelated or damaged JSON files are left untouched for recovery.
+    return null;
+  }
+}
+
+NoteTombstone? _decodeTombstone(String name, String content) {
+  if (!name.endsWith(NoteTombstone.fileSuffix)) return null;
+  final expectedId = name.substring(
+    0,
+    name.length - NoteTombstone.fileSuffix.length,
+  );
+  try {
+    final tombstone = NoteTombstone.fromJson(
+      Map<String, dynamic>.from(jsonDecode(content) as Map),
+    );
+    // A tombstone that names a different note than its file would suppress the
+    // wrong deletion, so it is ignored rather than trusted.
+    return tombstone.id == expectedId ? tombstone : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Why a sync stopped, so callers can tell "nothing to do" from "broken".
+enum DriveSyncStatus {
+  /// The folder was read, merged and written.
+  synced,
+
+  /// No folder has ever been chosen on this device. Not an error, and not worth
+  /// telling the user on every automatic sync.
+  notConfigured,
+
+  /// A folder was chosen before but is unreachable now, for example because
+  /// Google Drive for Desktop signed out or the folder was moved. The user
+  /// believes they are synced, so this must be reported.
+  unavailable,
+}
+
 class DriveSyncResult {
+  final DriveSyncStatus status;
   final int noteCount;
   final Note? currentNote;
 
-  const DriveSyncResult({required this.noteCount, this.currentNote});
+  /// Remote files that could not be decoded or stored, and were left in the
+  /// folder untouched instead of aborting the rest of the sync.
+  final int skippedRemoteFiles;
+
+  const DriveSyncResult({
+    this.status = DriveSyncStatus.synced,
+    this.noteCount = 0,
+    this.currentNote,
+    this.skippedRemoteFiles = 0,
+  });
+
+  bool get isSynced => status == DriveSyncStatus.synced;
 }
 
 class DriveSyncDebouncer {
@@ -80,6 +145,16 @@ abstract interface class SyncFolderBackend {
   Future<bool> configure({required bool chooseFolder});
   Future<Map<String, String>> readFiles();
   Future<void> writeFiles(Map<String, String> files);
+
+  /// Removes files from the shared folder. Needed so a deletion reaches other
+  /// devices and a spent tombstone is cleaned up. A backend that cannot delete
+  /// leaves the file behind; the instant comparison in [DriveSyncService] still
+  /// suppresses it, so nothing resurrects.
+  Future<void> deleteFiles(List<String> names);
+
+  /// True when a folder was chosen on this device before, so an unreachable
+  /// folder can be reported instead of being mistaken for "sync not set up".
+  Future<bool> hasConfiguredFolder();
 }
 
 SyncFolderBackend? createPlatformSyncBackend({
@@ -93,6 +168,21 @@ SyncFolderBackend? createPlatformSyncBackend({
   }
   return null;
 }
+
+DriveSyncService? _sharedSyncService;
+
+/// The one sync service for the process.
+///
+/// Each [DriveSyncService] serializes its own syncs through a private tail, so
+/// a library instance and an editor instance running at the same time interleave
+/// their read-modify-write of the same folder and can lose updates. Every
+/// [NoteStore] over the same directory shares one static write queue, so the
+/// store captured here is interchangeable with any other.
+DriveSyncService sharedSyncService(NoteStore store) => _sharedSyncService ??=
+    DriveSyncService(
+      store: store,
+      backend: createPlatformSyncBackend(localNoteDirectory: noteDirectory),
+    );
 
 class AndroidSyncFolderBackend implements SyncFolderBackend {
   static const _channel = MethodChannel('notes/sync');
@@ -117,6 +207,14 @@ class AndroidSyncFolderBackend implements SyncFolderBackend {
   @override
   Future<void> writeFiles(Map<String, String> files) =>
       _channel.invokeMethod<void>('writeFolder', {'files': files});
+
+  @override
+  Future<void> deleteFiles(List<String> names) =>
+      _channel.invokeMethod<void>('deleteFiles', {'names': names});
+
+  @override
+  Future<bool> hasConfiguredFolder() async =>
+      await _channel.invokeMethod<bool>('hasFolder') ?? false;
 }
 
 class WindowsSyncFolderBackend implements SyncFolderBackend {
@@ -200,9 +298,42 @@ class WindowsSyncFolderBackend implements SyncFolderBackend {
       );
       final temporary = File('${target.path}.tmp');
       await temporary.writeAsString(entry.value, flush: true);
+      // Drive mirrors this folder to other devices, so a note must never be
+      // missing from it. If the rename cannot replace the deleted target, write
+      // the target directly instead of leaving only a `.tmp` behind.
       if (await target.exists()) await target.delete();
-      await temporary.rename(target.path);
+      try {
+        await temporary.rename(target.path);
+      } on FileSystemException {
+        await target.writeAsString(entry.value, flush: true);
+        if (await temporary.exists()) await temporary.delete();
+      }
     }
+  }
+
+  @override
+  Future<void> deleteFiles(List<String> names) async {
+    final directories = <Directory>{_configuredFolder};
+    final root = _root;
+    if (root != null) directories.add(root);
+    for (final name in names) {
+      for (final directory in directories) {
+        final file = File(
+          '${directory.path}${Platform.pathSeparator}$name',
+        );
+        if (await file.exists()) await file.delete();
+      }
+    }
+  }
+
+  @override
+  Future<bool> hasConfiguredFolder() async {
+    final marker = File(
+      '${(await localNoteDirectory()).path}${Platform.pathSeparator}'
+      '.sync-folder',
+    );
+    if (!await marker.exists()) return false;
+    return (await marker.readAsString()).trim().isNotEmpty;
   }
 }
 
@@ -260,25 +391,118 @@ class DriveSyncService {
     final selectedBackend = backend;
     if (selectedBackend == null) return null;
     if (!await selectedBackend.configure(chooseFolder: chooseFolder)) {
-      return null;
+      // A folder that was never chosen is not a failure and must not nag on
+      // every automatic sync. One that was chosen and is unreachable now is a
+      // failure, because the user still believes their notes are synced.
+      return DriveSyncResult(
+        status: await selectedBackend.hasConfiguredFolder()
+            ? DriveSyncStatus.unavailable
+            : DriveSyncStatus.notConfigured,
+      );
     }
 
     final remoteRaw = await selectedBackend.readFiles();
+    final remoteNotePayloads = <String, String>{};
+    final remoteTombstones = <String, NoteTombstone>{};
+    remoteRaw.forEach((name, content) {
+      if (name.endsWith(NoteTombstone.fileSuffix)) {
+        final tombstone = _decodeTombstone(name, content);
+        if (tombstone != null) remoteTombstones[tombstone.id] = tombstone;
+      } else {
+        remoteNotePayloads[name] = content;
+      }
+    });
+
+    final localTombstones = await store.tombstones();
+    final tombstones = Map<String, NoteTombstone>.of(localTombstones);
+    remoteTombstones.forEach((id, remote) {
+      final local = tombstones[id];
+      if (local == null || remote.deleted.isAfter(local.deleted)) {
+        tombstones[id] = remote;
+      }
+    });
+
     final merged = {for (final item in await store.load()) item.id: item};
     final remoteNotes = await Isolate.run(
-      () => _decodeRemoteNotes(remoteRaw.values.toList(growable: false)),
+      () => _decodeRemoteNotes(remoteNotePayloads),
     );
-    for (final remote in remoteNotes) {
+    var skipped = remoteNotePayloads.length - remoteNotes.length;
+
+    final deletions = <String>{};
+    for (final found in remoteNotes) {
+      final remote = found.note;
+      final tombstone = tombstones[remote.id];
+      if (tombstone != null) {
+        final local = merged[remote.id];
+        // An edit made after the deletion is the newest fact about the note, so
+        // it revives the note and retires the tombstone on both sides. Checking
+        // the local copy first matters: the stale remote payload alone would
+        // otherwise suppress a newer local edit and hide it.
+        final revivedByLocal = local != null && !tombstone.suppresses(local);
+        if (!revivedByLocal && tombstone.suppresses(remote)) {
+          // The deletion is the newest fact about this note, so the remote
+          // payload is stale and the local copy must go too.
+          merged.remove(remote.id);
+          if (await store.hasPayload(remote.id)) {
+            await store.deleteNote(remote.id, deleted: tombstone.deleted);
+          } else if (!localTombstones.containsKey(remote.id)) {
+            await store.writeTombstone(tombstone);
+          }
+          deletions.add(found.name);
+          continue;
+        }
+        tombstones.remove(remote.id);
+        if (localTombstones.containsKey(remote.id)) {
+          await store.removeTombstone(remote.id);
+        }
+        deletions.add(tombstone.fileName);
+      }
       final local = merged[remote.id];
       if (local == null || remote.updated.isAfter(local.updated)) {
         merged[remote.id] = remote;
-        await store.save(remote);
+        try {
+          await store.save(remote);
+        } catch (_) {
+          // One unwritable remote note must not abort the rest of the sync.
+          merged.remove(remote.id);
+          skipped++;
+        }
+      }
+    }
+
+    // Tombstones that never met their remote payload above: a note deleted here
+    // while the folder was unreachable, or a payload that failed to decode.
+    for (final entry in tombstones.entries.toList()) {
+      final local = merged[entry.key];
+      if (local != null && !entry.value.suppresses(local)) {
+        tombstones.remove(entry.key);
+        if (localTombstones.containsKey(entry.key)) {
+          await store.removeTombstone(entry.key);
+        }
+        deletions.add(entry.value.fileName);
+        continue;
+      }
+      final name = '${entry.key}.json';
+      final payload = remoteRaw[name];
+      if (payload != null) {
+        final remote = _decodeNote(payload);
+        if (remote == null || entry.value.suppresses(remote)) {
+          deletions.add(name);
+        }
+      }
+      // The note is deleted and nothing revived it. A payload still on disk is
+      // hidden by the tombstone, so drop it: leaving it behind would let a
+      // stale copy resurface if a newer edit elsewhere retires the tombstone.
+      if (await store.hasPayload(entry.key)) {
+        await store.deleteNote(entry.key, deleted: entry.value.deleted);
       }
     }
 
     final encoded = <String, String>{
       for (final item in merged.values)
         '${item.id}.json': jsonEncode(item.toJson()),
+      for (final tombstone in tombstones.values)
+        tombstone.fileName: jsonEncode(tombstone.toJson()),
     };
     // A note's payload embeds its whole drawing as base64, so re-uploading
     // every note after every save is the dominant sync cost. Both backends
@@ -288,9 +512,13 @@ class DriveSyncService {
         if (remoteRaw[entry.key] != entry.value) entry.key: entry.value,
     };
     if (pending.isNotEmpty) await selectedBackend.writeFiles(pending);
+    if (deletions.isNotEmpty) {
+      await selectedBackend.deleteFiles(deletions.toList());
+    }
     return DriveSyncResult(
       noteCount: merged.length,
       currentNote: currentNoteId == null ? null : merged[currentNoteId],
+      skippedRemoteFiles: skipped,
     );
   }
 }
