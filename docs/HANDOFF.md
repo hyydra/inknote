@@ -2,9 +2,9 @@
 
 ## Current state
 
-- Latest published release: v0.4.24, with Android APK and Windows installer.
-- Working branch: `main` after PR #52. The whole-repo review fixes, PRs #36-#46, are merged, and so is PR #47 (CI platform coverage); its workflow patches are deliberately checked in as files under `docs/patches/` because this credential cannot push to `.github/workflows/`.
-- Release commit: `56aa817` (`v0.4.24`, the merge of PR #52, whose head is `63de452`); the previous release was `924ca0f` (`v0.4.23`, PR #48's head `67d848d`).
+- Latest published release: v0.4.25, with Android APK and Windows installer.
+- Working branch: `main` after PR #57. The whole-repo review fixes, PRs #36-#46, are merged, and so is PR #47 (CI platform coverage); its workflow patches are deliberately checked in as files under `docs/patches/` because this credential cannot push to `.github/workflows/`.
+- Release commit: `59c7fe8` (`v0.4.25`, the merge of PR #57, whose head is `dbee9e5`); the previous release was `56aa817` (`v0.4.24`, PR #52's head `63de452`).
 - Raster drawing migration, editor controls and tiled raster storage are included in the published v0.4.18 release.
 - Sync and save fixes (UTC timestamps, changed-notes-only upload, save before suspend or update) merged through PR #25 (`7aa0a54`) shipped in v0.4.19 and are still live in v0.4.20. The earlier `v0.4.18` tag was re-created at `7cf2ee6` after the post-merge workflow passed, which is why the previous notes here said the tag had been removed.
 - Glyph-precise text activation (a text block opens only when the tap lands on its text; the rest of the block draws) merged through PR #28 (`010b2b5`) shipped in v0.4.20.
@@ -12,6 +12,7 @@
 - The home-screen widget pinned typed notes as blank paper because `renderPreview` never painted text; that and the hard-edged eraser shipped in v0.4.22 through PR #32.
 - All eleven review fixes shipped in v0.4.23: tombstoned deletes, unsigned releases refused and a single-instance Windows installer, pinch-zoom that cannot append a page, an unreadable note folder reported instead of spun at with a crash-safe upgrade copy, a bounded and cancellable update download, autosave with a refusal to close on an unwritten note, undo/redo over the raster, a blurred mark that fades over the band the preview shows, raster tiles decoded on demand, and toolbar rows that stay inside their window. Details in [publish-v0-4-23](./handoff/2026-11-13-publish-v0-4-23.md).
 - v0.4.24 ships one behaviour change: the line being typed is held above the bottom menu, including when the soft keyboard appears over a line that was already on screen, and a canvas too short for a line no longer shakes the page. Alongside it the six legacy test scripts became real suites, so CI counts 107 checks instead of 68. Details in [publish-v0-4-24](./handoff/2026-11-13-publish-v0-4-24.md).
+- v0.4.25 ships one behaviour change: the home-screen widget pins the first page that carries ink instead of blank paper, and a widget update that cannot be made reports the error rather than leaving the card as it was. It also carries two test-only fixes for waits that failed under CPU load. Details in [publish-v0-4-25](./handoff/2026-11-13-publish-v0-4-25.md).
 - The local post-merge builds in `artifacts/local-build-2026-11-11/` were built as v0.4.17 and are not the release assets.
 
 ## Task log
@@ -30,5 +31,7 @@
 - [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — merged through PR #47; the workflow patches it describes ship as files under `docs/patches/` and still need a token with the `workflow` scope to apply.
 - [Publish v0.4.24](./handoff/2026-11-13-publish-v0-4-24.md) — complete; published from `56aa817` through PR #52, assets verified from their downloaded bytes.
 - Raster residency waits — merged through PR #54 (`0a9da49`); two tests read `residentTileCount` after a fixed `pumpEventQueue()` and failed under CPU load, so the wait became a bounded condition. No separate handoff note.
-- [Pin the page that has ink](./handoff/2026-11-13-pin-the-page-that-has-ink.md) — opened as PR #55; the home-screen widget pinned blank paper for notes whose drawing starts below the first page. Not merged.
+- [Pin the page that has ink](./handoff/2026-11-13-pin-the-page-that-has-ink.md) — merged through PR #55 (`c38c4fc`); the home-screen widget pinned blank paper for notes whose drawing starts below the first page. Shipped in v0.4.25.
+- Drive-sync residency waits — merged through PR #56 (`b4eaa4f`); the debouncer tests paused a fixed 80 ms and 30 ms and read zero counters under CPU load, so the waits became condition waits with a quiet period. No separate handoff note.
+- [Publish v0.4.25](./handoff/2026-11-13-publish-v0-4-25.md) — complete; published from `59c7fe8` through PR #57, assets verified from their downloaded bytes.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
