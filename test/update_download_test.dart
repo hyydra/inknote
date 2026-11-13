@@ -52,14 +52,6 @@ void main() {
     if (await temporary.exists()) await temporary.delete(recursive: true);
   });
 
-  List<String> remainingFileNames(Directory directory) => directory
-      .listSync()
-      .whereType<Directory>()
-      .expand((child) => child.listSync())
-      .whereType<File>()
-      .map((file) => file.uri.pathSegments.last)
-      .toList();
-
   test('the installer arrives complete and verified', () async {
     final uri = await server.start((request) {
       writeAll(request, payloadBytes);
@@ -78,7 +70,15 @@ void main() {
     expect(file.existsSync(), isTrue);
     expect(file.uri.pathSegments.last, 'Pennino-Setup.bin');
     // The half-written name is the download's working space, never a leftover.
-    expect(remainingFileNames(temporary), ['Pennino-Setup.bin']);
+    expect(
+      temporary
+          .listSync()
+          .whereType<Directory>()
+          .expand((attempt) => attempt.listSync())
+          .whereType<File>()
+          .map((file) => file.uri.pathSegments.last),
+      ['Pennino-Setup.bin'],
+    );
     expect(progress, isNotEmpty);
     expect(progress.last.first, payloadBytes.length);
     expect(progress.last.last, payloadBytes.length);
@@ -108,7 +108,11 @@ void main() {
       ),
       throwsA(isA<UpdateDownloadException>()),
     );
-    expect(remainingFileNames(temporary), isEmpty);
+    // Every attempt has a folder of its own, so a stopped attempt can be
+    // removed whole: nothing it left behind can be mistaken for an installer
+    // by the next one.
+    expect(temporary.listSync(), isEmpty,
+        reason: 'the abandoned attempt stayed in the temp folder');
   });
 
   test('cancelling a download stops it and keeps no partial file', () async {
@@ -138,7 +142,11 @@ void main() {
         ),
       ),
     );
-    expect(remainingFileNames(temporary), isEmpty);
+    // Every attempt has a folder of its own, so a stopped attempt can be
+    // removed whole: nothing it left behind can be mistaken for an installer
+    // by the next one.
+    expect(temporary.listSync(), isEmpty,
+        reason: 'the abandoned attempt stayed in the temp folder');
   });
 
   test('a download that does not match its digest is discarded', () async {
@@ -157,7 +165,11 @@ void main() {
     );
     // An installer that cannot be verified must not be left where a later run,
     // or a user, could reach for it.
-    expect(remainingFileNames(temporary), isEmpty);
+    // Every attempt has a folder of its own, so a stopped attempt can be
+    // removed whole: nothing it left behind can be mistaken for an installer
+    // by the next one.
+    expect(temporary.listSync(), isEmpty,
+        reason: 'the abandoned attempt stayed in the temp folder');
   });
 
   test('a refused download says so', () async {
@@ -174,6 +186,10 @@ void main() {
       ),
       throwsA(isA<UpdateDownloadException>()),
     );
-    expect(remainingFileNames(temporary), isEmpty);
+    // Every attempt has a folder of its own, so a stopped attempt can be
+    // removed whole: nothing it left behind can be mistaken for an installer
+    // by the next one.
+    expect(temporary.listSync(), isEmpty,
+        reason: 'the abandoned attempt stayed in the temp folder');
   });
 }
