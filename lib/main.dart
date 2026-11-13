@@ -618,10 +618,21 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   double canvasPageHeight = 1200;
   double canvasWidth = 2000;
   late RasterDrawingStore rasterDrawing;
+
+  /// The marks this editor has made since it opened the note. It dies with
+  /// the page, and with any raster store it no longer describes.
+  final RasterHistory undoHistory = RasterHistory();
   late Future<void> _rasterLoadOperation;
   Future<void>? _rasterMigrationOperation;
   bool rasterImagesLoaded = false;
   bool isRasterizing = false;
+
+  /// True while an undo or redo step is being swapped back into the paper.
+  bool _isReverting = false;
+
+  /// The swap in flight, so a released stroke waits for it instead of baking
+  /// its mark into a page that is half taken back.
+  Future<void>? _revertOperation;
   Object? rasterImageError;
   bool legacyRasterizationScheduled = false;
   bool rasterMigrationOnlyDirty = false;
@@ -872,6 +883,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
     setState(() {
       rasterDrawing = migrated;
+      // The marks this history describes were made on the store that has just
+      // been replaced; their tiles belong to a drawing that no longer exists.
+      undoHistory.clear();
       widget.note.strokes.removeRange(0, legacyStrokes.length);
       widget.note.rasterWidth = rasterDrawing.width;
       widget.note.rasterPageHeight = rasterDrawing.pageHeight;
@@ -1540,24 +1554,34 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final erasing = activeEraser != null;
     setState(() => isRasterizing = true);
     try {
+      // A revert is replacing tiles through the real codec; drawing beside it
+      // would bake a mark into a page that is half-taken-back, and the
+      // snapshot this stroke records would not be the one the user sees.
+      await _revertOperation;
       await _ensureRasterized();
-      final changed = erasing
-          ? await rasterDrawing.eraseStroke(
-              stroke,
-              canvasWidth: canvasWidth.ceil(),
-              canvasPageHeight: canvasPageHeight.ceil(),
-              pageCount: widget.note.pageCount,
-            )
-          : true;
-      if (!erasing) {
-        await rasterDrawing.addStroke(
-          stroke,
-          canvasWidth: canvasWidth.ceil(),
-          canvasPageHeight: canvasPageHeight.ceil(),
-          pageCount: widget.note.pageCount,
-        );
-      }
+      // The mark is baked inside a recording, so taking it back costs the
+      // tiles it covered and no more. The recording is also the honest answer
+      // to 'did anything change at all': a mark that landed off the paper
+      // replaced no tile, where the drawing path used to assume it always had.
+      final covered = await rasterDrawing.record(() async {
+        if (erasing) {
+          await rasterDrawing.eraseStroke(
+            stroke,
+            canvasWidth: canvasWidth.ceil(),
+            canvasPageHeight: canvasPageHeight.ceil(),
+            pageCount: widget.note.pageCount,
+          );
+        } else {
+          await rasterDrawing.addStroke(
+            stroke,
+            canvasWidth: canvasWidth.ceil(),
+            canvasPageHeight: canvasPageHeight.ceil(),
+            pageCount: widget.note.pageCount,
+          );
+        }
+      });
       if (!mounted) return;
+      if (covered != null) undoHistory.record(covered);
       setState(() {
         active = null;
         activeEraser = null;
@@ -1568,13 +1592,72 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         widget.note.rasterWidth = rasterDrawing.width;
         widget.note.rasterPageHeight = rasterDrawing.pageHeight;
       });
-      if (changed) _markChanged();
+      if (covered != null) _markChanged();
     } catch (error) {
       if (!mounted) return;
       setState(() => isRasterizing = false);
       _markChanged();
       _showRasterError(error);
     }
+  }
+
+  /// A mark that is mid-bake, or a step that is mid-swap, is not a settled
+  /// state to take another step from. A save running beside either is not a
+  /// reason to grey the buttons out: the store encodes and swaps tiles one
+  /// operation at a time, so the write simply waits for the page to settle.
+  bool get _drawingIsSettled =>
+      !isRasterizing &&
+      !_isReverting &&
+      active == null &&
+      activeEraser == null;
+
+  bool get canUndo => undoHistory.canUndo && _drawingIsSettled;
+  bool get canRedo => undoHistory.canRedo && _drawingIsSettled;
+
+  Future<void> _undo() => _revert(
+        take: undoHistory.takeUndo,
+        keep: undoHistory.putRedo,
+        putBack: undoHistory.putUndo,
+      );
+
+  Future<void> _redo() => _revert(
+        take: undoHistory.takeRedo,
+        keep: undoHistory.putUndo,
+        putBack: undoHistory.putRedo,
+      );
+
+  /// Swaps one step of the journal back into the paper. What the swap
+  /// replaces goes on the other stack, so undo and redo are the same
+  /// operation seen from either side, and a step that could not be swapped
+  /// goes back where it came from instead of vanishing from the history.
+  Future<void> _revert({
+    required RasterTileSnapshot? Function() take,
+    required void Function(RasterTileSnapshot replaced) keep,
+    required void Function(RasterTileSnapshot step) putBack,
+  }) async {
+    final step = take();
+    if (step == null) return;
+    setState(() => _isReverting = true);
+    final operation = rasterDrawing.restore(step);
+    _revertOperation = operation;
+    RasterTileSnapshot? replaced;
+    Object? failure;
+    try {
+      replaced = await operation;
+    } catch (error) {
+      failure = error;
+    }
+    _revertOperation = null;
+    if (!mounted) return;
+    if (failure != null) {
+      putBack(step);
+      setState(() => _isReverting = false);
+      _showRasterError(failure);
+      return;
+    }
+    if (replaced != null) keep(replaced);
+    setState(() => _isReverting = false);
+    _markChanged();
   }
 
   Future<void> _persist() async {
@@ -1980,6 +2063,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     try {
       setState(() {
         rasterDrawing = nextRasterDrawing;
+        undoHistory.clear();
         rasterImagesLoaded = false;
         rasterImageError = null;
         legacyRasterizationScheduled = false;
@@ -2627,6 +2711,16 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             actions: [
+              IconButton(
+                tooltip: 'Undo the last mark',
+                onPressed: canUndo ? _undo : null,
+                icon: const Icon(Icons.undo),
+              ),
+              IconButton(
+                tooltip: 'Redo the mark you took back',
+                onPressed: canRedo ? _redo : null,
+                icon: const Icon(Icons.redo),
+              ),
               if (MediaQuery.sizeOf(context).width >= 700)
                 TextButton.icon(
                   onPressed: isSaving ? null : _saveNow,

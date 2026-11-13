@@ -40,6 +40,64 @@ class RasterTileKey {
   int get hashCode => Object.hash(page, column, row);
 }
 
+/// The tiles one drawing action replaced, held as PNG bytes. A tile that was
+/// not there before is recorded as absent, so taking the action back can
+/// remove it again.
+///
+/// Bytes rather than decoded images because a history has to be affordable: a
+/// 512×512 tile is a megabyte in the renderer and a few tens of kilobytes
+/// here.
+@immutable
+class RasterTileSnapshot {
+  final Map<RasterTileKey, Uint8List?> tiles;
+
+  const RasterTileSnapshot(this.tiles);
+}
+
+/// The undo and redo stacks for one note's drawing, bounded because every
+/// entry is the pixels a mark covered.
+class RasterHistory {
+  final int maxEntries;
+  final List<RasterTileSnapshot> _undo = [];
+  final List<RasterTileSnapshot> _redo = [];
+
+  RasterHistory({this.maxEntries = 30});
+
+  bool get canUndo => _undo.isNotEmpty;
+  bool get canRedo => _redo.isNotEmpty;
+
+  @visibleForTesting
+  int get undoDepth => _undo.length;
+
+  /// A mark was just made, and [covered] is what it changed. Whatever could
+  /// be redone is now unreachable: the drawing no longer leads to it.
+  void record(RasterTileSnapshot covered) {
+    _add(_undo, covered);
+    _redo.clear();
+  }
+
+  /// The step to take back, or nothing when there is no step. What the undo
+  /// replaces goes back on the other stack through [putRedo].
+  RasterTileSnapshot? takeUndo() => _undo.isEmpty ? null : _undo.removeLast();
+
+  /// The step to repeat, or nothing. [putUndo]'s counterpart.
+  RasterTileSnapshot? takeRedo() => _redo.isEmpty ? null : _redo.removeLast();
+
+  void putRedo(RasterTileSnapshot replaced) => _add(_redo, replaced);
+
+  void putUndo(RasterTileSnapshot replaced) => _add(_undo, replaced);
+
+  void clear() {
+    _undo.clear();
+    _redo.clear();
+  }
+
+  void _add(List<RasterTileSnapshot> stack, RasterTileSnapshot value) {
+    stack.add(value);
+    if (stack.length > maxEntries) stack.removeAt(0);
+  }
+}
+
 class RasterDrawingStore {
   static const int tileSize = 512;
 
@@ -48,12 +106,92 @@ class RasterDrawingStore {
   final Map<RasterTileKey, ui.Image> tiles = {};
   final Map<RasterTileKey, String> _encodedTiles = {};
   final Set<RasterTileKey> _dirtyTiles = {};
+  Map<RasterTileKey, Uint8List?>? _recording;
+  Future<void> _tileWork = Future<void>.value();
   bool _disposed = false;
 
   RasterDrawingStore({this.width = 0, this.pageHeight = 0});
 
+  /// Tile work that reads every tile, or swaps them in and out, runs one at a
+  /// time: a save encodes tiles one by one and a revert disposes and replaces
+  /// them, so the two beside each other would write half-swapped tiles, iterate
+  /// a map that is changing, or draw from an image the other just released.
+  ///
+  /// A failure still reaches the caller through the returned future; the queue
+  /// only forgets it, so one bad write cannot strand every tile operation
+  /// behind a rejected future.
+  Future<T> _serialize<T>(Future<T> Function() body) {
+    final started = _tileWork.then((_) => body());
+    _tileWork = started.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return started;
+  }
+
   @visibleForTesting
   int get dirtyTileCount => _dirtyTiles.length;
+
+  /// Runs [body] and returns the pixels it replaced, or null when it replaced
+  /// none. The store records each tile at the one place a tile changes, so an
+  /// action only ever costs the tiles it actually covered.
+  Future<RasterTileSnapshot?> record(Future<void> Function() body) async {
+    _ensureNotDisposed();
+    if (_recording != null) {
+      throw StateError('A raster action is already being recorded');
+    }
+    final replaced = <RasterTileKey, Uint8List?>{};
+    _recording = replaced;
+    try {
+      await body();
+    } finally {
+      _recording = null;
+    }
+    if (_disposed || replaced.isEmpty) return null;
+    return RasterTileSnapshot(replaced);
+  }
+
+  /// Puts [snapshot] back and returns the pixels it replaced, so the same step
+  /// can be repeated later. A tile recorded as absent is taken away again, and
+  /// every tile touched is marked dirty so the next write saves the note as it
+  /// now is.
+  Future<RasterTileSnapshot> restore(RasterTileSnapshot snapshot) =>
+      _serialize(() => _restore(snapshot));
+
+  Future<RasterTileSnapshot> _restore(RasterTileSnapshot snapshot) async {
+    _ensureNotDisposed();
+    final replaced = <RasterTileKey, Uint8List?>{};
+    for (final entry in snapshot.tiles.entries) {
+      final current = tiles[entry.key];
+      replaced[entry.key] =
+          current == null ? null : await _encodeTileBytes(entry.key, current);
+      final bytes = entry.value;
+      if (bytes == null) {
+        current?.dispose();
+        tiles.remove(entry.key);
+        _encodedTiles.remove(entry.key);
+        continue;
+      }
+      final image = await decodeImageFromList(bytes);
+      if (_disposed) {
+        image.dispose();
+        break;
+      }
+      current?.dispose();
+      tiles[entry.key] = image;
+      _encodedTiles.remove(entry.key);
+      _dirtyTiles.add(entry.key);
+    }
+    return RasterTileSnapshot(replaced);
+  }
+
+  Future<Uint8List> _encodeTileBytes(RasterTileKey key, ui.Image image) async {
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (data == null) {
+      throw StateError('Could not encode drawing tile ${key.encoded}');
+    }
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
 
   Future<void> load(
     Map<String, String> encodedTiles, {
@@ -202,7 +340,9 @@ class RasterDrawingStore {
     return changed;
   }
 
-  Future<Map<String, String>> encode() async {
+  Future<Map<String, String>> encode() => _serialize(_encodeTiles);
+
+  Future<Map<String, String>> _encodeTiles() async {
     _ensureNotDisposed();
     final encoded = <String, String>{};
     for (final entry in tiles.entries) {
@@ -211,14 +351,9 @@ class RasterDrawingStore {
         encoded[entry.key.encoded] = cached;
         continue;
       }
-      final data = await entry.value.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = await _encodeTileBytes(entry.key, entry.value);
       _ensureNotDisposed();
-      if (data == null) {
-        throw StateError('Could not encode drawing tile ${entry.key.encoded}');
-      }
-      final value = base64Encode(
-        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-      );
+      final value = base64Encode(bytes);
       _encodedTiles[entry.key] = value;
       _dirtyTiles.remove(entry.key);
       encoded[entry.key.encoded] = value;
@@ -486,6 +621,15 @@ class RasterDrawingStore {
     ui.PictureRecorder recorder,
     Size size,
   ) async {
+    // Taking the recording before the new tile is rasterized means only one
+    // tile image is ever in flight, and it is the one place a tile changes, so
+    // the snapshot holds exactly the tiles this action covered and nothing
+    // else.
+    final recording = _recording;
+    if (recording != null && !_disposed && !recording.containsKey(key)) {
+      recording[key] =
+          previous == null ? null : await _encodeTileBytes(key, previous);
+    }
     final picture = recorder.endRecording();
     try {
       final image =

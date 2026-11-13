@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -295,5 +296,174 @@ void main() {
       source.dispose();
       migrated.dispose();
     }
+  });
+
+  test('a mark on blank paper is taken back by removing the tile', () async {
+    final store = RasterDrawingStore();
+    try {
+      final covered = await store.record(
+        () => store.addStroke(
+              line(20),
+              canvasWidth: 100,
+              canvasPageHeight: 100,
+              pageCount: 1,
+            ),
+      );
+
+      expect(covered, isNotNull);
+      expect(covered!.tiles, hasLength(1));
+      // The tile was not there before the mark, so taking the mark back is
+      // not a repaint but a removal.
+      expect(covered.tiles.values.single, isNull);
+      expect(await alphaAtStore(store, 0, 50, 20), greaterThan(0));
+
+      final replaced = await store.restore(covered);
+      expect(store.tileAt(0, 50, 20), isNull);
+      expect(await alphaAtStore(store, 0, 50, 20), 0);
+      // What the undo took away is what redo has to put back.
+      expect(replaced.tiles.values.single, isNotNull);
+
+      await store.restore(replaced);
+      expect(await alphaAtStore(store, 0, 50, 20), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('undoing an erase gives back the pixels the eraser took', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStroke(
+        line(20),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+
+      final erased = await store.record(
+        () => store.eraseStroke(
+              Stroke(
+                points: const [CanvasPoint(50, 20)],
+                color: 0xff000000,
+                width: 14,
+                highlight: false,
+              ),
+              canvasWidth: 100,
+              canvasPageHeight: 100,
+              pageCount: 1,
+            ),
+      );
+
+      expect(erased, isNotNull);
+      expect(erased!.tiles.values.single, isNotNull);
+      expect(await alphaAtStore(store, 0, 50, 20), 0);
+
+      await store.restore(erased);
+      expect(await alphaAtStore(store, 0, 50, 20), greaterThan(0));
+      // A reverted page is a changed page, so the next write saves it.
+      expect(store.dirtyTileCount, greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('a mark that reached no tile has nothing to take back', () async {
+    final store = RasterDrawingStore();
+    try {
+      final covered = await store.record(
+        () => store.addStroke(
+              Stroke(
+                points: const [CanvasPoint(5000, 5000)],
+                color: 0xff000000,
+                width: 6,
+                highlight: false,
+              ),
+              canvasWidth: 100,
+              canvasPageHeight: 100,
+              pageCount: 1,
+            ),
+      );
+
+      expect(covered, isNull);
+      expect(store.tiles, isEmpty);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('only one mark is recorded at a time', () async {
+    final store = RasterDrawingStore();
+    final gate = Completer<void>();
+    try {
+      var started = false;
+      final first = store.record(() async {
+        started = true;
+        await gate.future;
+      });
+      expect(started, isTrue);
+
+      await expectLater(
+        store.record(() async {}),
+        throwsStateError,
+        reason: 'a second recording would overwrite the first one\'s pixels',
+      );
+
+      gate.complete();
+      await first;
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('a save and a revert take turns inside the tiles', () async {
+    final store = RasterDrawingStore();
+    try {
+      final covered = await store.record(
+        () => store.addStroke(
+              line(20),
+              canvasWidth: 100,
+              canvasPageHeight: 100,
+              pageCount: 1,
+            ),
+      );
+
+      final write = store.encode();
+      final back = store.restore(covered!);
+      final encoded = await write;
+      final replaced = await back;
+
+      expect(
+        encoded,
+        hasLength(1),
+        reason: 'the write saw the mark, not its own absence',
+      );
+      expect(store.tileAt(0, 50, 20), isNull);
+      expect(replaced.tiles.values.single, isNotNull);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('the history keeps the recent steps and forgets the oldest', () {
+    final history = RasterHistory(maxEntries: 3);
+    RasterTileSnapshot step(int index) =>
+        RasterTileSnapshot({RasterTileKey(0, index, 0): null});
+
+    for (var index = 0; index < 5; index++) {
+      history.record(step(index));
+    }
+    expect(history.undoDepth, 3);
+    expect(history.canUndo, isTrue);
+    expect(history.canRedo, isFalse);
+
+    final taken = history.takeUndo();
+    expect(taken, isNotNull);
+    expect(history.undoDepth, 2);
+    history.putRedo(taken!);
+    expect(history.canRedo, isTrue);
+
+    history.record(step(9));
+    expect(history.canRedo, isFalse);
+    expect(history.takeRedo(), isNull);
   });
 }
