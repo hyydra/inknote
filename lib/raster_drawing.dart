@@ -514,6 +514,36 @@ class RasterDrawingStore {
     }
   }
 
+  /// Flattens the note into the one small picture the home screen widget
+  /// shows: the first page that carries ink, scaled into [size].
+  ///
+  /// Page zero is not that page for a note written further down, and a tile
+  /// that is only on disk is not enough to draw, so this decodes the page it
+  /// picked before painting it - nothing here is a paint that can ask. The
+  /// tiles of a page are drawn in that page's own coordinates, so one scale
+  /// puts whichever page was picked into the picture.
+  Future<void> paintPreview(Canvas canvas, Size size) async {
+    _ensureNotDisposed();
+    if (width <= 0 || pageHeight <= 0 || _allKeys.isEmpty) return;
+    var page = _allKeys.first.page;
+    for (final key in _allKeys) {
+      if (key.page < page) page = key.page;
+    }
+    await ensureResident(keysForPage(page));
+    if (_disposed) return;
+    canvas.save();
+    canvas.scale(
+      size.width / width.toDouble(),
+      size.height / pageHeight.toDouble(),
+    );
+    paintPage(
+      canvas,
+      page,
+      paint: Paint()..filterQuality = FilterQuality.medium,
+    );
+    canvas.restore();
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;

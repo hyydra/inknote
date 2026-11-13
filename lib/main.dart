@@ -1965,23 +1965,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         orElse: () => PaperPattern.lined,
       ),
     ).paint(canvas, size);
-    if (rasterDrawing.pageHasTiles(0)) {
-      // The preview image is painted off the widget tree, so nothing asks the
-      // store for the tiles it is about to draw: they have to be here before
-      // the canvas walks them.
-      await rasterDrawing.ensureResident(rasterDrawing.keysForPage(0));
-      canvas.save();
-      canvas.scale(
-        size.width / math.max(1, rasterDrawing.width),
-        size.height / math.max(1, rasterDrawing.pageHeight),
-      );
-      rasterDrawing.paintPage(
-        canvas,
-        0,
-        paint: Paint()..filterQuality = FilterQuality.medium,
-      );
-      canvas.restore();
-    }
+    // The preview image is painted off the widget tree, so nothing asks the
+    // store for the tiles it is about to draw. The store decodes the page it
+    // picks itself, and it picks the first page that has ink: page zero is
+    // blank paper for a note whose strokes start further down, and that
+    // preview is what a home screen widget then shows.
+    await rasterDrawing.paintPreview(canvas, size);
     // The document lives in canvas coordinates, so it takes the page's own
     // scale rather than the raster's; without it a typed note pins as blank
     // paper.
@@ -2051,6 +2040,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Widget error: ${e.message}')));
+    } catch (error) {
+      // A preview that never reached the channel leaves the widget showing
+      // whatever it showed before, which looks like a widget that does not
+      // work. Saying so is the only way the person can tell that apart from
+      // a launcher that was never given the note.
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Widget update failed: $error')),
+        );
     }
   }
 
