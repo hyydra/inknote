@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -8,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/canvas_painter.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
+import 'package:notes_app/note_store.dart';
 import 'package:notes_app/raster_drawing.dart';
 import 'package:notes_app/rich_text_controller.dart';
 import 'package:notes_app/update_service.dart';
@@ -74,8 +78,176 @@ Future<Color> rasterPixel(
   return color;
 }
 
+/// Asks the running app to close and waits for every observer to answer.
+/// The request has to be in flight while the two clocks alternate: what it
+/// awaits is image work that only moves under fake time and a file write that
+/// only moves under real time, so a single `runAsync` around it deadlocks.
+Future<ui.AppExitResponse> requestAppExit(WidgetTester tester) async {
+  ui.AppExitResponse? response;
+  unawaited(
+    tester.binding.handleRequestAppExit().then((value) => response = value),
+  );
+  await pumpUntilTrue(
+    tester,
+    () => response != null,
+    'the close request to be answered',
+  );
+  // The observers answered by setting state; a frame has to run before the
+  // tree says what they made it say.
+  await tester.pump();
+  return response!;
+}
+
 bool painterHasPage(RasterDrawingPainter painter, int page) =>
     painter.tiles.keys.any((key) => key.page == page);
+
+/// A notes folder the editor can really write to. `path_provider` never
+/// answers inside a widget test, so an autosave test has to hand the editor
+/// its own directory and let the write run on the real clock.
+Directory writableFolder(String name) {
+  final folder = Directory.systemTemp.createTempSync('pennino-$name-');
+  addTearDown(() => folder.deleteSync(recursive: true));
+  return folder;
+}
+
+/// A folder that fails the way a full disk or a revoked permission does, so a
+/// test can watch what the editor does with a write that never lands.
+NoteDirectoryProvider get unwritableFolder {
+  return () async => throw const FileSystemException('No notes folder');
+}
+
+/// Opens [note] in an editor wide enough to show its save button as a word.
+Future<void> pumpEditor(
+  WidgetTester tester,
+  Note note,
+  NoteDirectoryProvider folder,
+) async {
+  await tester.binding.setSurfaceSize(const Size(1000, 800));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: ThemeData(platform: TargetPlatform.windows),
+      home: EditorPage(note: note, directoryProvider: folder),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Runs the fake clock and the real one in turn until [done] reports true:
+/// the debounce only advances under fake time and the write behind it only
+/// advances under real time, so neither pump alone can ever see it finish.
+///
+/// Each turn hands the real clock a slice - five milliseconds, not a bare
+/// yield - and the fake clock 100 ms, and the wait is bounded by turns and by
+/// wall time, whichever runs out first. Bounding it by turns alone made the
+/// budget a function of how expensive a turn is on the machine: sixty of them
+/// took 0.76 s on a CI runner and 0.12 s here, so a flush that needed about a
+/// second of real time answered in the editor and timed out in CI, which is
+/// how `closing the window writes what is on screen` came to fail on one run
+/// and pass on every local one. The wall cap is what a slow disk gets; the
+/// turn cap keeps an app that never answers from pumping the fake clock
+/// through another hour before the message is printed.
+Future<void> pumpUntilTrue(
+  WidgetTester tester,
+  bool Function() done,
+  String waitingFor,
+) async {
+  const wallBudget = Duration(seconds: 10);
+  const fakeStep = Duration(milliseconds: 100);
+  const maxTurns = 400;
+  final watch = Stopwatch()..start();
+  var turns = 0;
+  while (true) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+    turns++;
+    if (done()) return;
+    if (watch.elapsed > wallBudget || turns >= maxTurns) {
+      fail(
+        'still waiting for $waitingFor after ${watch.elapsedMilliseconds} ms '
+        'of real time and ${(turns * fakeStep.inMilliseconds / 1000).round()} '
+        's of fake time',
+      );
+    }
+    await tester.pump(fakeStep);
+  }
+}
+
+Future<void> pumpUntil(
+  WidgetTester tester,
+  Finder finder,
+  String waitingFor,
+) =>
+    pumpUntilTrue(tester, () => tester.any(finder), waitingFor);
+
+/// Waits for a released mark to finish baking into the paper. The bake reads
+/// the tile it is about to replace so undo can put it back, which is real
+/// image work pumpAndSettle cannot see, and the live preview layers are the
+/// last thing the editor clears once that work is done.
+Future<void> pumpUntilMarkCommitted(WidgetTester tester) => pumpUntilTrue(
+      tester,
+      () =>
+          find.byKey(const Key('active-erase-layer')).evaluate().isEmpty &&
+          find.byType(ImageFiltered).evaluate().isEmpty,
+      'the mark to finish baking into the paper',
+    );
+
+/// The undo and redo buttons are the editor's own report that a step has
+/// landed: a swap goes through the real image codec, which the fake clock
+/// cannot see, and the opposite direction only becomes pressable once the
+/// step it took is on the other stack. Sound while the journal holds one
+/// step, which is what these tests are about.
+IconButton toolButton(WidgetTester tester, String tooltip) => tester
+    .widget<IconButton>(
+      find.ancestor(
+        of: find.byTooltip(tooltip),
+        matching: find.byType(IconButton),
+      ),
+    );
+
+Future<void> pumpUntilRevert(
+  WidgetTester tester,
+  String pressed,
+  String finished,
+) async {
+  await tester.tap(find.byTooltip(pressed));
+  await pumpUntilTrue(
+    tester,
+    () => toolButton(tester, finished).onPressed != null,
+    'the $pressed step to land on the paper',
+  );
+}
+
+/// Reads back what the editor wrote, on the real clock the file needs.
+Future<Map<String, dynamic>> storedNote(
+  WidgetTester tester,
+  Directory folder,
+  String noteId,
+) async {
+  final contents = await tester.runAsync(
+    () => File('${folder.path}/$noteId.json').readAsString(),
+  );
+  if (contents == null) throw StateError('No autosaved file could be read');
+  return jsonDecode(contents) as Map<String, dynamic>;
+}
+
+/// Waits for the write itself rather than for the button, which reads 'Saved'
+/// both before an edit lands and after: the file appearing is the proof, and
+/// the button settling afterwards is the report the user gets.
+Future<Map<String, dynamic>> waitForStoredNote(
+  WidgetTester tester,
+  Directory folder,
+  String noteId,
+) async {
+  final file = File('${folder.path}/$noteId.json');
+  await pumpUntilTrue(
+    tester,
+    () => file.existsSync(),
+    'the autosaved note to reach the disk',
+  );
+  await pumpUntil(tester, find.text('Saved'), 'the save button to settle');
+  return storedNote(tester, folder, noteId);
+}
 
 double contrastRatio(Color foreground, Color background) {
   final first = foreground.computeLuminance();
@@ -191,8 +363,7 @@ void main() {
     );
   });
 
-  testWidgets('a stationary tap rasterizes without drawing undo',
-      (tester) async {
+  testWidgets('a stationary tap rasterizes onto the paper', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = emptyNote();
@@ -207,11 +378,127 @@ void main() {
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
-    expect(find.byIcon(Icons.undo), findsNothing);
-    expect(find.byIcon(Icons.redo), findsNothing);
+    expect(toolButton(tester, 'Undo the last mark').onPressed, isNotNull);
+  });
+
+  testWidgets('undo takes the mark back and redo puts it again',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(
+      toolButton(tester, 'Undo the last mark').onPressed,
+      isNull,
+      reason: 'nothing has been drawn yet, so there is nothing to take back',
+    );
+    expect(
+      toolButton(tester, 'Redo the mark you took back').onPressed,
+      isNull,
+      reason: 'nothing has been taken back yet',
+    );
+
+    final drawingCanvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(drawingCanvas) + const Offset(150, 100);
+    final gesture = await tester.startGesture(origin);
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(60, 20));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
+
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      greaterThan(0),
+      reason: 'the drag leaves ink',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Undo the last mark',
+      'Redo the mark you took back',
+    );
+    expect(note.strokes, isEmpty);
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      0,
+      reason: 'undo puts the paper back the way it was',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Redo the mark you took back',
+      'Undo the last mark',
+    );
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      greaterThan(0),
+      reason: 'redo puts the mark back',
+    );
+  });
+
+  testWidgets('undoing an erase brings the mark back, text and all',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'undo-erase-note',
+      title: 'Undo erase',
+      text: 'Keep this text',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(600, 350), CanvasPoint(700, 350)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Eraser'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
+    await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 650, 350)),
+      0,
+      reason: 'the eraser took the ink out of the paper',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Undo the last mark',
+      'Redo the mark you took back',
+    );
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 650, 350)),
+      greaterThan(0),
+      reason: 'undoing the erase gives the ink back',
+    );
+    expect(note.text, 'Keep this text');
+    expect(find.text('Keep this text'), findsOneWidget);
   });
 
   testWidgets('freehand moves update the active stroke', (tester) async {
@@ -449,6 +736,7 @@ void main() {
     expect(find.byType(ImageFiltered), findsWidgets);
     await gesture.up();
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
@@ -550,6 +838,94 @@ void main() {
     await second.up();
   });
 
+  testWidgets('a zoomed out page maps pen input by its real scale',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Half size, offset by twenty and thirty pixels. Reading the scale from the
+    // longest basis vector of the matrix reports the untouched Z axis instead,
+    // so a zoomed out page would map the pen as if it were unscaled.
+    editor.transformationController.value =
+        Matrix4(0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, -20, -30, 0, 1);
+    await tester.pumpAndSettle();
+    expect(editor.isRasterizing, isFalse);
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(220, 230));
+    await gesture.moveTo(origin + const Offset(320, 230));
+    await tester.pump();
+
+    final points = editor.active.points as List<CanvasPoint>;
+    expect(points.first.x, closeTo(480, 0.01));
+    expect(points.first.y, closeTo(520, 0.01));
+    expect(points.last.x - points.first.x, closeTo(200, 0.01));
+    await gesture.up();
+  });
+
+  testWidgets('a drifting pinch zoom appends no page while a pan still can',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Zoomed in twice and parked at the end of the only page, the state a hand
+    // is really in when it pinches out to read the bottom. Any gesture read as
+    // a scroll grows the document by exactly one page, which is what this test
+    // measures.
+    editor.transformationController.value =
+        Matrix4(2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, -1600, 0, 1);
+    await tester.pump();
+    final matrix = editor.transformationController.value;
+    expect(
+      (editor.canvasViewportHeight - matrix.storage[13]) / matrix.storage[0],
+      greaterThanOrEqualTo(note.pageCount * editor.canvasPageHeight - 180),
+      reason: 'the bottom of the document is in view before the pinch',
+    );
+
+    final first = await tester.createGesture(pointer: 1);
+    final second = await tester.createGesture(pointer: 2);
+    await first.down(origin + const Offset(180, 480));
+    await second.down(origin + const Offset(480, 480));
+
+    // Zooming out brings the fingers together while a hand that rotates drifts
+    // the pinch centre upwards. The spread dominates that movement, so it is a
+    // zoom and the end of the document must not grow.
+    await first.moveTo(origin + const Offset(240, 420));
+    await second.moveTo(origin + const Offset(420, 420));
+    await tester.pump();
+
+    expect(note.pageCount, 1, reason: 'zooming must never create a page');
+
+    // The same two fingers moving together by a hundred pixels keep their
+    // distance, so they are scrolling and the end appends exactly one page.
+    await first.moveTo(origin + const Offset(240, 320));
+    await second.moveTo(origin + const Offset(420, 320));
+    await tester.pump();
+
+    expect(note.pageCount, 2, reason: 'a two finger pan still scrolls');
+    await first.up();
+    await second.up();
+  });
+
   testWidgets('only downward scrolling appends one vertically marked page',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
@@ -633,6 +1009,7 @@ void main() {
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
@@ -683,6 +1060,7 @@ void main() {
 
     await gesture.up();
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
     expect(find.byKey(const Key('active-erase-layer')), findsNothing);
   });
 
@@ -875,30 +1253,129 @@ void main() {
     expect(find.byType(ImageFiltered), findsNothing);
   });
 
-  testWidgets('drawing changes wait for the manual save button',
+  testWidgets('a pen stroke reaches the disk without pressing save',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final folder = writableFolder('autosave-stroke');
     final note = Note(
-      id: 'stable-save-status',
-      title: 'Stable save status',
+      id: 'autosave-stroke',
+      title: 'Autosave stroke',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [],
     );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: note),
-      ),
-    );
+    await pumpEditor(tester, note, () async => folder);
+    expect(find.text('Saved'), findsOneWidget);
 
-    expect(find.text('Save'), findsOneWidget);
     await tester.dragFrom(const Offset(300, 300), const Offset(80, 40));
+    final stored = await waitForStoredNote(tester, folder, note.id);
+    expect(
+      stored['rasterTiles'],
+      isNotEmpty,
+      reason: 'the stroke was never written into the autosaved note',
+    );
+  });
+
+  testWidgets('a typed edit reaches the disk without pressing save',
+      (tester) async {
+    final folder = writableFolder('autosave-text');
+    final note = Note(
+      id: 'autosave-text',
+      title: 'Autosave text',
+      text: 'a first line',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, () async => folder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'typed, then written by itself',
+    );
     await tester.pump();
-    expect(find.byIcon(Icons.save), findsOneWidget);
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.byIcon(Icons.save), findsOneWidget);
-    expect(find.text('Autosave on'), findsNothing);
+    // The button has to admit there is something to save while the debounce is
+    // still running, or it looks like the edit was ignored.
+    expect(find.text('Save now'), findsOneWidget);
+
+    final stored = await waitForStoredNote(tester, folder, note.id);
+    expect(stored['text'], 'typed, then written by itself');
+  });
+
+  testWidgets('closing the window writes what is on screen', (tester) async {
+    final folder = writableFolder('autosave-exit');
+    final note = Note(
+      id: 'autosave-exit',
+      title: 'Autosave exit',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, () async => folder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'written before the close',
+    );
+    // Deliberately less than the debounce: the close is what has to flush it.
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(await requestAppExit(tester), ui.AppExitResponse.exit);
+    final stored = await storedNote(tester, folder, note.id);
+    expect(stored['text'], 'written before the close');
+  });
+
+  testWidgets('a note that cannot be written keeps the window open',
+      (tester) async {
+    final note = Note(
+      id: 'autosave-blocked',
+      title: 'Autosave blocked',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, unwritableFolder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'the only copy',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    final response = await requestAppExit(tester);
+
+    expect(response, ui.AppExitResponse.cancel);
+    expect(find.text('Retry save'), findsOneWidget);
+    expect(
+      find.text(
+        'Pennino could not save this note, so it is staying open. '
+        'Save it, or copy the note out, before closing.',
+      ),
+      findsOneWidget,
+    );
+    // One message per failure: the close path explains itself, so the autosave
+    // queue must not also queue its own notice behind it.
+    expect(
+      find.textContaining('could not write this note'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('an autosave that fails says so without being pressed',
+      (tester) async {
+    final note = Note(
+      id: 'autosave-failed',
+      title: 'Autosave failed',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, unwritableFolder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'the only copy',
+    );
+    await pumpUntil(
+      tester,
+      find.textContaining('could not write this note'),
+      'the failed autosave to be reported',
+    );
+    expect(find.text('Retry save'), findsOneWidget);
+    expect(find.text('Saved'), findsNothing);
   });
 
   testWidgets('bold applies to selected text, not the document',
@@ -1176,6 +1653,50 @@ void main() {
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
     expect(documentFocused(tester), isFalse);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
+  });
+
+  testWidgets('a note folder that cannot be opened is reported, not spun at',
+      (tester) async {
+    var attempts = 0;
+    Future<Directory> provider() async {
+      attempts++;
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LauncherCanvasPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An unguarded load leaves the splash spinner turning with no way out.
+    expect(attempts, 1);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    // The message is not a dead end: the button attempts the load again, so a
+    // folder that is reachable by then opens the note.
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(attempts, 2);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+  });
+
+  testWidgets('the library reports an unreadable folder instead of no notes',
+      (tester) async {
+    Future<Directory> provider() async {
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LibraryPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An empty list is the worst possible answer to a failed read: it invites
+    // the user to write a first note over notes that are still on disk.
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.text('Start your first handwritten note'), findsNothing);
+    expect(find.text('New note'), findsOneWidget);
   });
 
   testWidgets('tapping a checklist mark toggles it on the first tap',

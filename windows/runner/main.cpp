@@ -7,6 +7,19 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // Enforce a single running instance. The name must match AppMutex in
+  // installer/pennino.iss so setup can detect a running Pennino. Without this,
+  // two instances can race on the same note JSON files.
+  HANDLE single_instance_mutex =
+      ::CreateMutexW(nullptr, TRUE, L"PenninoSingleInstance");
+  if (single_instance_mutex == nullptr ||
+      ::GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (single_instance_mutex != nullptr) {
+      ::CloseHandle(single_instance_mutex);
+    }
+    return EXIT_FAILURE;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -28,6 +41,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"Pennino", origin, size)) {
+    ::CoUninitialize();
+    ::CloseHandle(single_instance_mutex);
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
@@ -39,5 +54,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::CoUninitialize();
+  ::CloseHandle(single_instance_mutex);
   return EXIT_SUCCESS;
 }
