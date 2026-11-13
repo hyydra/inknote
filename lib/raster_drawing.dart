@@ -414,7 +414,10 @@ class RasterDrawingStore {
     bool blur = false,
   }) sync* {
     if (pageCount <= 0 || stroke.points.isEmpty) return;
-    final padding = blur ? stroke.width * 0.75 + 1 : stroke.width / 2 + 1;
+    // A blur mark reaches as far out as the widest pass of its ramp, which is
+    // wider than the brush, so the tiles it can touch are picked with that
+    // same reach.
+    final padding = blur ? blurReach(stroke.width) + 1 : stroke.width / 2 + 1;
     final bounds = _pointBounds(stroke).inflate(padding);
     final firstPage = (bounds.top / pageHeight).floor().clamp(0, pageCount - 1);
     final lastPage =
@@ -457,7 +460,6 @@ class RasterDrawingStore {
     final tileBounds = _tileGlobalBounds(key);
     if (tileBounds.width <= 0 || tileBounds.height <= 0) return;
     if (!erase) {
-      if (!_hasSourceIn(tileBounds.inflate(30), page: key.page)) return;
       await _updateBlurTile(key, stroke, previous, tileBounds);
       return;
     }
@@ -501,73 +503,148 @@ class RasterDrawingStore {
     await _replaceTile(key, previous, recorder, tileBounds.size);
   }
 
+  /// Pixels past the reach of the ramp that a blur bake still has to read: a
+  /// Gaussian wants its own radius on both sides, or the softened copy chews
+  /// at the edge of the buffer instead of fading.
+  static const double _blurReadMargin = 3 * blurSigma;
+
+  /// The page as it stands, blurred once, for the passes of the ramp to fade
+  /// over each other. Caller disposes the image.
+  Future<ui.Image> _softenSource(
+    Size size,
+    Offset origin, {
+    required int page,
+    required Rect sourceBounds,
+  }) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, Offset.zero & size);
+    canvas.saveLayer(
+      Offset.zero & size,
+      Paint()
+        ..blendMode = BlendMode.src
+        ..imageFilter = ui.ImageFilter.blur(
+          sigmaX: blurSigma,
+          sigmaY: blurSigma,
+        ),
+    );
+    _drawSourceTiles(
+      canvas,
+      origin,
+      page: page,
+      sourceBounds: sourceBounds,
+    );
+    canvas.restore();
+    final picture = recorder.endRecording();
+    try {
+      return await picture.toImage(size.width.ceil(), size.height.ceil());
+    } finally {
+      picture.dispose();
+    }
+  }
+
   Future<void> _updateBlurTile(
     RasterTileKey key,
     Stroke stroke,
     ui.Image? previous,
     Rect tileBounds,
   ) async {
-    const padding = 30.0;
-    final paddedSize = Size(
-      tileBounds.width + padding * 2,
-      tileBounds.height + padding * 2,
+    // The ramp only changes paper inside its own reach, so the buffer follows
+    // the stroke instead of the tile: softening a whole 512 pixel tile plus a
+    // 120 pixel margin, twice over, for a 44 pixel brush was the price of
+    // every commit and of every blurred stroke a legacy note carries.
+    final affected = _pointBounds(stroke)
+        .inflate(blurReach(stroke.width))
+        .intersect(tileBounds);
+    if (affected.isEmpty) return;
+    final page = Rect.fromLTWH(
+      0,
+      key.page * pageHeight.toDouble(),
+      width.toDouble(),
+      pageHeight.toDouble(),
     );
-    final paddedOrigin = tileBounds.topLeft - const Offset(padding, padding);
+    final buffer = affected.inflate(_blurReadMargin).intersect(page);
+    if (buffer.isEmpty || !_hasSourceIn(buffer, page: key.page)) return;
+    final bufferSize = buffer.size;
+    final bufferOrigin = buffer.topLeft;
     final localStroke = _translateStroke(
       stroke,
-      dx: -paddedOrigin.dx,
-      dy: -paddedOrigin.dy,
+      dx: -bufferOrigin.dx,
+      dy: -bufferOrigin.dy,
     );
     final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, Offset.zero & paddedSize);
+    final canvas = Canvas(recorder, Offset.zero & bufferSize);
     _drawSourceTiles(
       canvas,
-      paddedOrigin,
+      bufferOrigin,
       page: key.page,
-      sourceBounds: tileBounds.inflate(padding),
+      sourceBounds: buffer,
     );
-    final clip =
-        BlurStrokeClipper(localStroke, widthScale: 1.5).getClip(paddedSize);
-    final blurBounds = clip.getBounds().inflate(padding).intersect(
-          Offset.zero & paddedSize,
+    // One softened copy of the page, faded through the eight clips of the
+    // ramp in the same order the live preview stacks them. Every pass blurs
+    // with the same radius, so they can share the blur instead of each paying
+    // for it: committing only the narrowest pass, as this used to, stops the
+    // mark at a clip wall the moment the pen lifts.
+    final softened = await _softenSource(
+      bufferSize,
+      bufferOrigin,
+      page: key.page,
+      sourceBounds: buffer,
+    );
+    try {
+      for (final pass in blurRampPasses) {
+        final clip = BlurStrokeClipper(
+          localStroke,
+          widthScale: pass.$1,
+        ).getClip(bufferSize);
+        if (clip.getBounds().isEmpty) continue;
+        canvas.save();
+        canvas.clipPath(clip);
+        canvas.drawImage(
+          softened,
+          Offset.zero,
+          Paint()
+            ..color = Color.fromARGB((255 * pass.$2).round(), 255, 255, 255)
+            // The pass the preview paints at full opacity covers the ones
+            // under it, so the sharp ink there is gone from the screen. The
+            // tiles have no paper to hide behind, so the bake has to drop that
+            // ink the same way; fading it over the mark instead would leave
+            // the committed stroke sharper than the one being drawn.
+            ..blendMode = pass.$2 >= 1.0 ? BlendMode.src : BlendMode.srcOver,
         );
-    if (!blurBounds.isEmpty) {
-      canvas.save();
-      canvas.clipPath(clip);
-      canvas.saveLayer(
-        blurBounds,
-        Paint()
-          ..blendMode = BlendMode.src
-          ..imageFilter = ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-      );
-      _drawSourceTiles(
-        canvas,
-        paddedOrigin,
-        page: key.page,
-        sourceBounds: tileBounds.inflate(padding),
-      );
-      canvas.restore();
-      canvas.restore();
+        canvas.restore();
+      }
+    } finally {
+      softened.dispose();
     }
     final picture = recorder.endRecording();
-    late final ui.Image paddedImage;
+    late final ui.Image bufferImage;
     try {
-      paddedImage = await picture.toImage(
-        paddedSize.width.ceil(),
-        paddedSize.height.ceil(),
+      bufferImage = await picture.toImage(
+        bufferSize.width.ceil(),
+        bufferSize.height.ceil(),
       );
     } finally {
       picture.dispose();
     }
     final cropRecorder = ui.PictureRecorder();
-    final cropCanvas = Canvas(cropRecorder);
+    final cropCanvas = Canvas(cropRecorder, Offset.zero & tileBounds.size);
+    if (previous != null) {
+      cropCanvas.drawImage(previous, Offset.zero, Paint());
+    }
+    // Inside its reach the buffer holds the whole result, ink the ramp took
+    // away included, so that patch goes over the tile rather than into it.
     cropCanvas.drawImageRect(
-      paddedImage,
-      Rect.fromLTWH(padding, padding, tileBounds.width, tileBounds.height),
-      Offset.zero & tileBounds.size,
-      Paint(),
+      bufferImage,
+      Rect.fromLTWH(
+        affected.left - bufferOrigin.dx,
+        affected.top - bufferOrigin.dy,
+        affected.width,
+        affected.height,
+      ),
+      affected.shift(-tileBounds.topLeft),
+      Paint()..blendMode = BlendMode.src,
     );
-    paddedImage.dispose();
+    bufferImage.dispose();
     await _replaceTile(key, previous, cropRecorder, tileBounds.size);
   }
 

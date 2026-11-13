@@ -151,6 +151,61 @@ void main() {
     }
   });
 
+  test('a committed blur fades out instead of ending at a clip wall', () async {
+    final store = RasterDrawingStore();
+    try {
+      await store.addStroke(
+        line(50, width: 40),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+      await store.addStroke(
+        Stroke(
+          points: const [CanvasPoint(50, 50)],
+          color: 0x00000000,
+          width: 44,
+          highlight: false,
+          blur: true,
+        ),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 1,
+      );
+
+      // The brush is 44 wide, so the pass that used to be committed alone
+      // clipped the mark 33 pixels from its centre and measured, down this
+      // column, 122 - 83 - 49 - 24 - 0 - 0: ink straight to nothing across two
+      // rows. The ramp the preview shows reaches 48 and fades the whole way,
+      // so each row has to be fainter than the one before it without any of
+      // them dropping out while the row in front of it still holds ink.
+      final edge = <int>[];
+      for (final y in [70, 74, 78, 82, 86, 90]) {
+        edge.add(await alphaAtStore(store, 0, 50, y));
+      }
+      expect(edge.first, greaterThan(0));
+
+      for (var index = 1; index < edge.length; index++) {
+        final previous = edge[index - 1];
+        final value = edge[index];
+        expect(
+          value,
+          lessThanOrEqualTo(previous),
+          reason: 'the mark fades as it leaves the stroke: $edge',
+        );
+        if (previous >= 8) {
+          expect(
+            value,
+            greaterThanOrEqualTo(previous / 4),
+            reason: 'the edge steps down, it does not stop: $edge',
+          );
+        }
+      }
+    } finally {
+      store.dispose();
+    }
+  });
+
   test('repeated blur strokes preserve drawing outside the blur mask',
       () async {
     final store = RasterDrawingStore();
