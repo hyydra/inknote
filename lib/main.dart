@@ -2283,16 +2283,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     required int layerIndex,
     Key? key,
   }) {
-    const passes = <(double, double, double)>[
-      (2.20, 2.5, 0.06),
-      (1.85, 4, 0.09),
-      (1.55, 6, 0.13),
-      (1.30, 8, 0.19),
-      (1.08, 10, 0.27),
-      (0.88, 12, 0.38),
-      (0.70, 14, 0.54),
-      (0.52, 16, 1.00),
-    ];
     final paperPattern = PaperPattern.values.firstWhere(
       (item) => item.name == widget.note.backgroundPattern,
       orElse: () => PaperPattern.lined,
@@ -2300,14 +2290,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final layer = Stack(
       fit: StackFit.expand,
       children: [
-        for (var index = 0; index < passes.length; index++)
+        for (var index = 0; index < blurRampPasses.length; index++)
           Opacity(
-            opacity: passes[index].$3,
+            opacity: blurRampPasses[index].$2,
             child: ClipPath(
               clipBehavior: Clip.antiAlias,
               clipper: BlurStrokeClipper(
                 stroke,
-                widthScale: passes[index].$1,
+                widthScale: blurRampPasses[index].$1,
                 reclip: identical(stroke, active) ? canvasRepaint : null,
               ),
               child: Stack(
@@ -2326,8 +2316,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   ImageFiltered(
                     key: ValueKey('blur-content-$index'),
                     imageFilter: ui.ImageFilter.blur(
-                      sigmaX: passes[index].$2,
-                      sigmaY: passes[index].$2,
+                      sigmaX: blurSigma,
+                      sigmaY: blurSigma,
                     ),
                     child: Stack(
                       fit: StackFit.expand,
