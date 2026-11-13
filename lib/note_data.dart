@@ -432,3 +432,54 @@ Map<int, String> _parseRasterPages(Object? rawPages) {
   });
   return pages;
 }
+
+/// Records that a note was deleted so the deletion survives a Drive sync.
+///
+/// Without a tombstone every sync re-imports any note that is present in the
+/// Drive folder but absent locally, so a note deleted on one device returns on
+/// the next sync. A tombstone is stored as `<id>.deleted.json` beside the note
+/// payloads, locally and in the shared folder.
+///
+/// A tombstone only suppresses payloads whose [Note.updated] is not newer than
+/// [deleted]. A note edited after it was deleted therefore wins and revives,
+/// which keeps the rule a plain instant comparison instead of a vote.
+class NoteTombstone {
+  /// Suffix of the file that carries a tombstone, in the notes folder.
+  static const String fileSuffix = '.deleted.json';
+
+  static const int currentFormatVersion = 1;
+  static final RegExp _safeNoteId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+  final String id;
+  final DateTime deleted;
+
+  const NoteTombstone({required this.id, required this.deleted});
+
+  factory NoteTombstone.fromJson(Map<String, dynamic> value) {
+    final id = value['id'] as String? ?? '';
+    if (!_safeNoteId.hasMatch(id)) {
+      throw const FormatException('Unsafe tombstone note id');
+    }
+    final raw = value['deleted'];
+    if (raw is! String) {
+      throw const FormatException('Tombstone has no deleted instant');
+    }
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) {
+      throw FormatException('Invalid tombstone instant: $raw');
+    }
+    return NoteTombstone(id: id, deleted: parsed.toUtc());
+  }
+
+  /// Name of the file that carries this tombstone in the notes folder.
+  String get fileName => '$id$fileSuffix';
+
+  /// True when [note] was not edited after the deletion this records.
+  bool suppresses(Note note) => !note.updated.isAfter(deleted);
+
+  Map<String, dynamic> toJson() => {
+        'formatVersion': currentFormatVersion,
+        'id': id,
+        'deleted': deleted.toUtc().toIso8601String(),
+      };
+}

@@ -814,6 +814,94 @@ void main() {
     await second.up();
   });
 
+  testWidgets('a zoomed out page maps pen input by its real scale',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Half size, offset by twenty and thirty pixels. Reading the scale from the
+    // longest basis vector of the matrix reports the untouched Z axis instead,
+    // so a zoomed out page would map the pen as if it were unscaled.
+    editor.transformationController.value =
+        Matrix4(0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, -20, -30, 0, 1);
+    await tester.pumpAndSettle();
+    expect(editor.isRasterizing, isFalse);
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(220, 230));
+    await gesture.moveTo(origin + const Offset(320, 230));
+    await tester.pump();
+
+    final points = editor.active.points as List<CanvasPoint>;
+    expect(points.first.x, closeTo(480, 0.01));
+    expect(points.first.y, closeTo(520, 0.01));
+    expect(points.last.x - points.first.x, closeTo(200, 0.01));
+    await gesture.up();
+  });
+
+  testWidgets('a drifting pinch zoom appends no page while a pan still can',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Zoomed in twice and parked at the end of the only page, the state a hand
+    // is really in when it pinches out to read the bottom. Any gesture read as
+    // a scroll grows the document by exactly one page, which is what this test
+    // measures.
+    editor.transformationController.value =
+        Matrix4(2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, -1600, 0, 1);
+    await tester.pump();
+    final matrix = editor.transformationController.value;
+    expect(
+      (editor.canvasViewportHeight - matrix.storage[13]) / matrix.storage[0],
+      greaterThanOrEqualTo(note.pageCount * editor.canvasPageHeight - 180),
+      reason: 'the bottom of the document is in view before the pinch',
+    );
+
+    final first = await tester.createGesture(pointer: 1);
+    final second = await tester.createGesture(pointer: 2);
+    await first.down(origin + const Offset(180, 480));
+    await second.down(origin + const Offset(480, 480));
+
+    // Zooming out brings the fingers together while a hand that rotates drifts
+    // the pinch centre upwards. The spread dominates that movement, so it is a
+    // zoom and the end of the document must not grow.
+    await first.moveTo(origin + const Offset(240, 420));
+    await second.moveTo(origin + const Offset(420, 420));
+    await tester.pump();
+
+    expect(note.pageCount, 1, reason: 'zooming must never create a page');
+
+    // The same two fingers moving together by a hundred pixels keep their
+    // distance, so they are scrolling and the end appends exactly one page.
+    await first.moveTo(origin + const Offset(240, 320));
+    await second.moveTo(origin + const Offset(420, 320));
+    await tester.pump();
+
+    expect(note.pageCount, 2, reason: 'a two finger pan still scrolls');
+    await first.up();
+    await second.up();
+  });
+
   testWidgets('only downward scrolling appends one vertically marked page',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
@@ -1541,6 +1629,50 @@ void main() {
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
     expect(documentFocused(tester), isFalse);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
+  });
+
+  testWidgets('a note folder that cannot be opened is reported, not spun at',
+      (tester) async {
+    var attempts = 0;
+    Future<Directory> provider() async {
+      attempts++;
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LauncherCanvasPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An unguarded load leaves the splash spinner turning with no way out.
+    expect(attempts, 1);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    // The message is not a dead end: the button attempts the load again, so a
+    // folder that is reachable by then opens the note.
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(attempts, 2);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+  });
+
+  testWidgets('the library reports an unreadable folder instead of no notes',
+      (tester) async {
+    Future<Directory> provider() async {
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LibraryPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An empty list is the worst possible answer to a failed read: it invites
+    // the user to write a first note over notes that are still on disk.
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.text('Start your first handwritten note'), findsNothing);
+    expect(find.text('New note'), findsOneWidget);
   });
 
   testWidgets('tapping a checklist mark toggles it on the first tap',
