@@ -3,7 +3,7 @@
 ## Current state
 
 - Latest published release: v0.4.23, with Android APK and Windows installer.
-- Working branch: `main` after PR #48. The whole-repo review fixes, PRs #36-#46, are merged; PR #47 (CI platform coverage) is open on purpose because three of its patches edit `.github/workflows/` and this credential cannot push there.
+- Working branch: `main` after PR #48. The whole-repo review fixes, PRs #36-#46, are merged, and so is PR #47 (CI platform coverage); its workflow patches are deliberately checked in as files under `docs/patches/` because this credential cannot push to `.github/workflows/`.
 - Release commit: `924ca0f` (`v0.4.23`, the merge of PR #48, whose head is `67d848d`); the previous release was `bb610a5` (`v0.4.22`, PR #34's head `1d5a5d9` — earlier notes here named `1d5a5d9`, which is the bump rather than what the tag peels to).
 - Raster drawing migration, editor controls and tiled raster storage are included in the published v0.4.18 release.
 - Sync and save fixes (UTC timestamps, changed-notes-only upload, save before suspend or update) merged through PR #25 (`7aa0a54`) shipped in v0.4.19 and are still live in v0.4.20. The earlier `v0.4.18` tag was re-created at `7cf2ee6` after the post-merge workflow passed, which is why the previous notes here said the tag had been removed.
@@ -26,5 +26,5 @@
 - [Publish v0.4.21](./handoff/2026-11-12-publish-v0-4-21.md) — complete; published from `38075fe`.
 - Publish v0.4.22 — complete; published from `1d5a5d9` through PR #34, with no separate handoff note of its own.
 - [Publish v0.4.23](./handoff/2026-11-13-publish-v0-4-23.md) — complete; published from `924ca0f` through PR #48, assets verified from their downloaded bytes.
-- CI platform coverage — open as PR #47; its note lives on that branch, not here, and three of its four patches are blocked on the `workflow` scope.
+- [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — merged through PR #47; the workflow patches it describes ship as files under `docs/patches/` and still need a token with the `workflow` scope to apply.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
