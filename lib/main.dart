@@ -1771,7 +1771,49 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
   }
 
-  Widget _drawingToolbar() {
+  /// How much of the block under the canvas the window can still carry.
+  /// The rows are fixed heights and the checklist scrolls inside its own
+  /// ceiling, so what is left over is worked out in the order the app
+  /// needs them: the ink tools first, then the paper, then the rows that
+  /// are a convenience - the stroke slider and, while typing, the ink row
+  /// that already has its way back at the top of the text row.
+  ({bool inkRow, bool strokeRow, double tasksHeight}) _bottomBlock(
+    double height,
+  ) {
+    const chooserHeight = 58.0;
+    const updateHeight = 44.0;
+    const textRowHeight = 60.0;
+    const strokeRowHeight = 52.0;
+    const inkRowHeight = 64.0;
+    const tasksHeaderHeight = 64.0;
+    const canvasFloor = 44.0;
+    final platform = Theme.of(context).platform;
+    // The two rows the block has to share the window with that are not
+    // part of it: the desktop tool chooser, and the update banner - which
+    // only some platforms are given at all.
+    final showsUpdateRow = platform == TargetPlatform.android ||
+        platform == TargetPlatform.windows;
+    var left = height -
+        (platform == TargetPlatform.android ? 0.0 : chooserHeight) -
+        (showsUpdateRow && UpdateService.availableUpdate.value != null
+            ? updateHeight
+            : 0.0);
+    final textTool = tool == DrawTool.text;
+    if (textTool) left -= textRowHeight;
+    final inkRow = !textTool || left >= inkRowHeight;
+    if (inkRow) left -= inkRowHeight;
+    final strokeRow = toolWidths.containsKey(tool) &&
+        left >= strokeRowHeight + canvasFloor;
+    if (strokeRow) left -= strokeRowHeight;
+    final tasks = left - canvasFloor;
+    return (
+      inkRow: inkRow,
+      strokeRow: strokeRow,
+      tasksHeight: tasks < tasksHeaderHeight ? 0.0 : math.min(220.0, tasks),
+    );
+  }
+
+  Widget _drawingToolbar({required bool showStrokeRow}) {
     final tools = [
       (DrawTool.text, 'Text'),
       (DrawTool.pencil, 'Pencil'),
@@ -1780,67 +1822,102 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (DrawTool.eraser, 'Eraser'),
       (DrawTool.blur, 'Blur'),
     ];
-    final toolbar = SizedBox(
-      key: Key(
-        Theme.of(context).platform == TargetPlatform.android
-            ? 'android-drawing-toolbar'
-            : 'drawing-toolbar',
-      ),
-      height: 64,
-      child: Material(
-        elevation: 6,
-        child: Row(
-          children: [
-            for (final entry in tools)
-              Expanded(
-                child: IconButton(
-                  tooltip: entry.$2,
-                  style: IconButton.styleFrom(
-                    backgroundColor: tool == entry.$1
-                        ? Theme.of(context).colorScheme.primaryContainer
-                        : null,
+    // Seven squares with a gap between them need more width than a small
+    // phone has, and a slot narrower than a fingertip is not a control.
+    // Below that the row keeps its slots and slides sideways instead.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tight = constraints.maxWidth / (tools.length + 1) < 40;
+        Widget slot(Widget child) =>
+            tight ? SizedBox(width: 44, child: child) : Expanded(child: child);
+        final toolbar = SizedBox(
+          key: Key(
+            Theme.of(context).platform == TargetPlatform.android
+                ? 'android-drawing-toolbar'
+                : 'drawing-toolbar',
+          ),
+          height: 64,
+          child: Material(
+            elevation: 6,
+            // The button's own padding came off the chip's width, so the
+            // row was spending it on a gap the slot already provided.
+            child: IconButtonTheme(
+              data: IconButtonThemeData(
+                style: IconButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 2,
+                    vertical: 8,
                   ),
-                  onPressed: () => _selectTool(entry.$1),
-                  icon: _toolbarIconFrame(_DrawingToolIcon(entry.$1)),
                 ),
               ),
-            Expanded(
-              child: PopupMenuButton<Color>(
-                tooltip: 'Drawing colour',
-                icon: _toolbarIconFrame(
-                  Icon(Icons.circle, color: _activeStrokeColor),
-                ),
-                onSelected: _setActiveStrokeColor,
-                itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
+              child: Row(
+                children: [
+                  for (final entry in tools)
+                    slot(IconButton(
+                      tooltip: entry.$2,
+                      style: IconButton.styleFrom(
+                        backgroundColor: tool == entry.$1
+                            ? Theme.of(context).colorScheme.primaryContainer
+                            : null,
+                      ),
+                      onPressed: () => _selectTool(entry.$1),
+                      icon: _toolbarIconFrame(_DrawingToolIcon(entry.$1)),
+                    )),
+                  slot(PopupMenuButton<Color>(
+                    tooltip: 'Drawing colour',
+                    icon: _toolbarIconFrame(
+                      Icon(Icons.circle, color: _activeStrokeColor),
+                    ),
+                    onSelected: _setActiveStrokeColor,
+                    itemBuilder: (_) => _colorMenuItems(_activeStrokeColor),
+                  )),
+                ],
               ),
             ),
+          ),
+        );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showStrokeRow) _strokeWidthControls(),
+            tight
+                ? SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: toolbar,
+                  )
+                : toolbar,
           ],
-        ),
-      ),
-    );
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (toolWidths.containsKey(tool)) _strokeWidthControls(),
-        toolbar,
-      ],
+        );
+      },
     );
   }
 
   Widget _toolbarIconFrame(Widget child) {
     final scheme = Theme.of(context).colorScheme;
-    final side = MediaQuery.sizeOf(context).width < 360 ? 40.0 : 48.0;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(7),
-      ),
-      child: SizedBox(
-        width: side,
-        height: side,
-        child: child,
-      ),
+    final requested = MediaQuery.sizeOf(context).width < 360 ? 40.0 : 48.0;
+    // The chip only ever gets the room its slot can hand over, and a slot
+    // that is narrower than the square asked for takes it out of the width
+    // alone - seven of them across a phone left every chip 39.7 wide by 48
+    // tall. Ask for the largest square the slot will actually give.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side = math.min(
+          requested,
+          math.min(constraints.maxWidth, constraints.maxHeight),
+        );
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: SizedBox(
+            width: side,
+            height: side,
+            child: child,
+          ),
+        );
+      },
     );
   }
 
@@ -1856,9 +1933,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         child: Row(
           children: [
             const SizedBox(width: 8),
-            Tooltip(
-              message: label,
-              child: _toolbarIconFrame(const Icon(Icons.line_weight, size: 20)),
+            SizedBox(
+              width: 48,
+              height: 52,
+              child: Center(
+                child: Tooltip(
+                  message: label,
+                  child: _toolbarIconFrame(
+                    const Icon(Icons.line_weight, size: 20),
+                  ),
+                ),
+              ),
             ),
             Expanded(
               child: Slider(
@@ -2391,7 +2476,15 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
               ),
             ],
           ),
-          body: Column(
+          body: LayoutBuilder(
+            // The rows under the canvas are fixed heights and a Column
+            // only ever hands its `Expanded` child what they leave behind,
+            // which is nothing once a landscape screen has lost half its
+            // height to the keyboard - the rows then spilled past the
+            // bottom of the window instead of giving any of themselves up.
+            builder: (context, body) {
+              final block = _bottomBlock(body.maxHeight);
+              return Column(
             children: [
               if (Theme.of(context).platform != TargetPlatform.android)
                 SizedBox(
@@ -2436,9 +2529,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-              if (showTasks)
+              if (showTasks && block.tasksHeight > 0)
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
+                  constraints: BoxConstraints(maxHeight: block.tasksHeight),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -2699,16 +2792,19 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _textToolbar(),
-                      _drawingToolbar(),
+                      if (block.inkRow)
+                        _drawingToolbar(showStrokeRow: block.strokeRow),
                     ],
                   ),
                 )
               else
                 SafeArea(
                   top: false,
-                  child: _drawingToolbar(),
+                  child: _drawingToolbar(showStrokeRow: block.strokeRow),
                 ),
             ],
+          );
+            },
           ),
         ),
       );
