@@ -1,24 +1,28 @@
-// ignore_for_file: avoid_print
-
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/note_data.dart';
 import 'package:notes_app/note_store.dart';
-
-void expectEqual(Object? actual, Object? expected, String message) {
-  if (actual != expected) {
-    throw StateError('$message: expected <$expected>, got <$actual>');
-  }
-}
 
 Note note(String title, DateTime updated) =>
     Note(id: 'failure-note', title: title, updated: updated, strokes: []);
 
-Future<void> main() async {
+Future<Directory> tempDirectory(String prefix) async {
+  final directory = await Directory.systemTemp.createTemp(prefix);
+  addTearDown(() async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+  });
+  return directory;
+}
+
+void main() {
+  // One case per boundary in `SaveStage`, so a stage added later is covered
+  // without editing this file.
   for (final failingStage in SaveStage.values) {
-    final directory = await Directory.systemTemp.createTemp('notes-failure-');
-    try {
+    test('a save interrupted after ${failingStage.name} keeps the payload',
+        () async {
+      final directory = await tempDirectory('notes-failure-');
       final normal = NoteStore(directoryProvider: () async => directory);
       await normal.save(note('Original', DateTime.utc(2026, 11, 9, 10)));
       final interrupted = NoteStore(
@@ -30,31 +34,34 @@ Future<void> main() async {
         },
       );
 
+      // The exception may or may not reach the caller - the publication step
+      // catches, and a process killed at that boundary never returns at all.
+      // What matters is the payload the interrupted save leaves on disk, which
+      // is what the reads below check.
       try {
         await interrupted.save(note('Newest', DateTime.utc(2026, 11, 9, 11)));
-      } on FileSystemException {
-        // Simulate process termination at this exact replacement boundary.
+      } on FileSystemException catch (_) {
+        // Expected for the boundaries that let it escape.
       }
 
       final recovered = await normal.load();
-      expectEqual(
+      expect(
         recovered.length,
         1,
-        'one note survives interruption after ${failingStage.name}',
+        reason: 'one note survives interruption after ${failingStage.name}',
       );
-      expectEqual(
+      expect(
         recovered.single.title,
         'Newest',
-        'completed payload survives interruption after ${failingStage.name}',
+        reason: 'completed payload survives interruption after '
+            '${failingStage.name}',
       );
-    } finally {
-      await directory.delete(recursive: true);
-    }
+    });
   }
-  print('PASS every replacement boundary retains the completed payload');
 
-  final directory = await Directory.systemTemp.createTemp('notes-queue-');
-  try {
+  test('separate stores serialize writes to the same note in call order',
+      () async {
+    final directory = await tempDirectory('notes-queue-');
     final firstSaveStarted = Completer<void>();
     final continueFirstSave = Completer<void>();
     final firstStore = NoteStore(
@@ -67,6 +74,7 @@ Future<void> main() async {
       },
     );
     final secondStore = NoteStore(directoryProvider: () async => directory);
+
     final first = firstStore.save(
       note('Queued first', DateTime.utc(2026, 11, 9, 12)),
     );
@@ -77,24 +85,21 @@ Future<void> main() async {
     await Future<void>.delayed(Duration.zero);
     continueFirstSave.complete();
     await Future.wait([first, second]);
+
     final loaded = await secondStore.load();
-    expectEqual(
+    expect(
       loaded.single.title,
       'Queued second',
-      'separate stores serialize writes to the same note in call order',
+      reason: 'separate stores serialize writes to the same note in call order',
     );
-    print('PASS separate stores serialize writes to the same note');
-  } finally {
-    await directory.delete(recursive: true);
-  }
+  });
 
-  final deleteDirectory =
-      await Directory.systemTemp.createTemp('notes-delete-queue-');
-  try {
+  test('a queued delete runs after the save it follows', () async {
+    final directory = await tempDirectory('notes-delete-queue-');
     final saveStarted = Completer<void>();
     final continueSave = Completer<void>();
     final saveStore = NoteStore(
-      directoryProvider: () async => deleteDirectory,
+      directoryProvider: () async => directory,
       afterSaveStage: (stage) async {
         if (stage == SaveStage.temporaryWritten) {
           saveStarted.complete();
@@ -102,8 +107,8 @@ Future<void> main() async {
         }
       },
     );
-    final deleteStore =
-        NoteStore(directoryProvider: () async => deleteDirectory);
+    final deleteStore = NoteStore(directoryProvider: () async => directory);
+
     final pendingSave = saveStore.save(
       note('Deleted after save', DateTime.utc(2026, 11, 9, 14)),
     );
@@ -114,13 +119,11 @@ Future<void> main() async {
     await Future<void>.delayed(Duration.zero);
     continueSave.complete();
     await Future.wait([pendingSave, pendingDelete]);
-    expectEqual(
-      (await deleteStore.load()).isEmpty,
-      true,
-      'queued delete runs after and removes the pending save',
+
+    expect(
+      await deleteStore.load(),
+      isEmpty,
+      reason: 'queued delete runs after and removes the pending save',
     );
-    print('PASS separate stores serialize delete after a pending save');
-  } finally {
-    await deleteDirectory.delete(recursive: true);
-  }
+  });
 }
