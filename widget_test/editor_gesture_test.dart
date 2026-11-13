@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -8,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_app/canvas_painter.dart';
 import 'package:notes_app/main.dart';
 import 'package:notes_app/note_data.dart';
+import 'package:notes_app/note_store.dart';
 import 'package:notes_app/raster_drawing.dart';
 import 'package:notes_app/rich_text_controller.dart';
 import 'package:notes_app/update_service.dart';
@@ -74,8 +78,114 @@ Future<Color> rasterPixel(
   return color;
 }
 
+/// Asks the running app to close and waits for every observer to answer.
+/// The request has to be in flight while the two clocks alternate: what it
+/// awaits is image work that only moves under fake time and a file write that
+/// only moves under real time, so a single `runAsync` around it deadlocks.
+Future<ui.AppExitResponse> requestAppExit(WidgetTester tester) async {
+  ui.AppExitResponse? response;
+  unawaited(
+    tester.binding.handleRequestAppExit().then((value) => response = value),
+  );
+  await pumpUntilTrue(
+    tester,
+    () => response != null,
+    'the close request to be answered',
+  );
+  // The observers answered by setting state; a frame has to run before the
+  // tree says what they made it say.
+  await tester.pump();
+  return response!;
+}
+
 bool painterHasPage(RasterDrawingPainter painter, int page) =>
     painter.tiles.keys.any((key) => key.page == page);
+
+/// A notes folder the editor can really write to. `path_provider` never
+/// answers inside a widget test, so an autosave test has to hand the editor
+/// its own directory and let the write run on the real clock.
+Directory writableFolder(String name) {
+  final folder = Directory.systemTemp.createTempSync('pennino-$name-');
+  addTearDown(() => folder.deleteSync(recursive: true));
+  return folder;
+}
+
+/// A folder that fails the way a full disk or a revoked permission does, so a
+/// test can watch what the editor does with a write that never lands.
+NoteDirectoryProvider get unwritableFolder {
+  return () async => throw const FileSystemException('No notes folder');
+}
+
+/// Opens [note] in an editor wide enough to show its save button as a word.
+Future<void> pumpEditor(
+  WidgetTester tester,
+  Note note,
+  NoteDirectoryProvider folder,
+) async {
+  await tester.binding.setSurfaceSize(const Size(1000, 800));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: ThemeData(platform: TargetPlatform.windows),
+      home: EditorPage(note: note, directoryProvider: folder),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Runs the fake clock and the real one in turn until [done] reports true:
+/// the debounce only advances under fake time and the write behind it only
+/// advances under real time, so neither pump alone can ever see it finish.
+Future<void> pumpUntilTrue(
+  WidgetTester tester,
+  bool Function() done,
+  String waitingFor,
+) async {
+  for (var attempt = 0; attempt < 60; attempt++) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    if (done()) return;
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+  fail('still waiting for $waitingFor after six seconds of fake time');
+}
+
+Future<void> pumpUntil(
+  WidgetTester tester,
+  Finder finder,
+  String waitingFor,
+) =>
+    pumpUntilTrue(tester, () => tester.any(finder), waitingFor);
+
+/// Reads back what the editor wrote, on the real clock the file needs.
+Future<Map<String, dynamic>> storedNote(
+  WidgetTester tester,
+  Directory folder,
+  String noteId,
+) async {
+  final contents = await tester.runAsync(
+    () => File('${folder.path}/$noteId.json').readAsString(),
+  );
+  if (contents == null) throw StateError('No autosaved file could be read');
+  return jsonDecode(contents) as Map<String, dynamic>;
+}
+
+/// Waits for the write itself rather than for the button, which reads 'Saved'
+/// both before an edit lands and after: the file appearing is the proof, and
+/// the button settling afterwards is the report the user gets.
+Future<Map<String, dynamic>> waitForStoredNote(
+  WidgetTester tester,
+  Directory folder,
+  String noteId,
+) async {
+  final file = File('${folder.path}/$noteId.json');
+  await pumpUntilTrue(
+    tester,
+    () => file.existsSync(),
+    'the autosaved note to reach the disk',
+  );
+  await pumpUntil(tester, find.text('Saved'), 'the save button to settle');
+  return storedNote(tester, folder, noteId);
+}
 
 double contrastRatio(Color foreground, Color background) {
   final first = foreground.computeLuminance();
@@ -875,30 +985,129 @@ void main() {
     expect(find.byType(ImageFiltered), findsNothing);
   });
 
-  testWidgets('drawing changes wait for the manual save button',
+  testWidgets('a pen stroke reaches the disk without pressing save',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final folder = writableFolder('autosave-stroke');
     final note = Note(
-      id: 'stable-save-status',
-      title: 'Stable save status',
+      id: 'autosave-stroke',
+      title: 'Autosave stroke',
       updated: DateTime.utc(2026, 11, 11),
       strokes: [],
     );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.windows),
-        home: EditorPage(note: note),
-      ),
-    );
+    await pumpEditor(tester, note, () async => folder);
+    expect(find.text('Saved'), findsOneWidget);
 
-    expect(find.text('Save'), findsOneWidget);
     await tester.dragFrom(const Offset(300, 300), const Offset(80, 40));
+    final stored = await waitForStoredNote(tester, folder, note.id);
+    expect(
+      stored['rasterTiles'],
+      isNotEmpty,
+      reason: 'the stroke was never written into the autosaved note',
+    );
+  });
+
+  testWidgets('a typed edit reaches the disk without pressing save',
+      (tester) async {
+    final folder = writableFolder('autosave-text');
+    final note = Note(
+      id: 'autosave-text',
+      title: 'Autosave text',
+      text: 'a first line',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, () async => folder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'typed, then written by itself',
+    );
     await tester.pump();
-    expect(find.byIcon(Icons.save), findsOneWidget);
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.byIcon(Icons.save), findsOneWidget);
-    expect(find.text('Autosave on'), findsNothing);
+    // The button has to admit there is something to save while the debounce is
+    // still running, or it looks like the edit was ignored.
+    expect(find.text('Save now'), findsOneWidget);
+
+    final stored = await waitForStoredNote(tester, folder, note.id);
+    expect(stored['text'], 'typed, then written by itself');
+  });
+
+  testWidgets('closing the window writes what is on screen', (tester) async {
+    final folder = writableFolder('autosave-exit');
+    final note = Note(
+      id: 'autosave-exit',
+      title: 'Autosave exit',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, () async => folder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'written before the close',
+    );
+    // Deliberately less than the debounce: the close is what has to flush it.
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(await requestAppExit(tester), ui.AppExitResponse.exit);
+    final stored = await storedNote(tester, folder, note.id);
+    expect(stored['text'], 'written before the close');
+  });
+
+  testWidgets('a note that cannot be written keeps the window open',
+      (tester) async {
+    final note = Note(
+      id: 'autosave-blocked',
+      title: 'Autosave blocked',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, unwritableFolder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'the only copy',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    final response = await requestAppExit(tester);
+
+    expect(response, ui.AppExitResponse.cancel);
+    expect(find.text('Retry save'), findsOneWidget);
+    expect(
+      find.text(
+        'Pennino could not save this note, so it is staying open. '
+        'Save it, or copy the note out, before closing.',
+      ),
+      findsOneWidget,
+    );
+    // One message per failure: the close path explains itself, so the autosave
+    // queue must not also queue its own notice behind it.
+    expect(
+      find.textContaining('could not write this note'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('an autosave that fails says so without being pressed',
+      (tester) async {
+    final note = Note(
+      id: 'autosave-failed',
+      title: 'Autosave failed',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [],
+    );
+    await pumpEditor(tester, note, unwritableFolder);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('canvas-text-field-0')),
+      'the only copy',
+    );
+    await pumpUntil(
+      tester,
+      find.textContaining('could not write this note'),
+      'the failed autosave to be reported',
+    );
+    expect(find.text('Retry save'), findsOneWidget);
+    expect(find.text('Saved'), findsNothing);
   });
 
   testWidgets('bold applies to selected text, not the document',
