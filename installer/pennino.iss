@@ -11,6 +11,8 @@
 AppId={{3CB0040A-C8B7-498F-9DDC-EF2ED3398266}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
+AppMutex=PenninoSingleInstance
 AppPublisher={#MyAppPublisher}
 AppPublisherURL=https://github.com/hyydra/pennino
 AppSupportURL=https://github.com/hyydra/pennino/issues

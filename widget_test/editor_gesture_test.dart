@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -1264,6 +1265,50 @@ void main() {
     expect(find.byKey(const Key('text-toolbar')), findsNothing);
     expect(documentFocused(tester), isFalse);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
+  });
+
+  testWidgets('a note folder that cannot be opened is reported, not spun at',
+      (tester) async {
+    var attempts = 0;
+    Future<Directory> provider() async {
+      attempts++;
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LauncherCanvasPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An unguarded load leaves the splash spinner turning with no way out.
+    expect(attempts, 1);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    // The message is not a dead end: the button attempts the load again, so a
+    // folder that is reachable by then opens the note.
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(attempts, 2);
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+  });
+
+  testWidgets('the library reports an unreadable folder instead of no notes',
+      (tester) async {
+    Future<Directory> provider() async {
+      throw const FileSystemException('folder is unreachable');
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: LibraryPage(directoryProvider: provider)),
+    );
+    await tester.pump();
+
+    // An empty list is the worst possible answer to a failed read: it invites
+    // the user to write a first note over notes that are still on disk.
+    expect(find.text('Notes could not be opened'), findsOneWidget);
+    expect(find.text('Start your first handwritten note'), findsNothing);
+    expect(find.text('New note'), findsOneWidget);
   });
 
   testWidgets('tapping a checklist mark toggles it on the first tap',

@@ -40,7 +40,11 @@ class NotesApp extends StatelessWidget {
 }
 
 class LauncherCanvasPage extends StatefulWidget {
-  const LauncherCanvasPage({super.key});
+  const LauncherCanvasPage({super.key, this.directoryProvider});
+
+  /// Overridable so a test can make the note folder unreachable. Production
+  /// always uses [noteDirectory].
+  final NoteDirectoryProvider? directoryProvider;
 
   @override
   State<LauncherCanvasPage> createState() => _LauncherCanvasPageState();
@@ -48,81 +52,221 @@ class LauncherCanvasPage extends StatefulWidget {
 
 class _LauncherCanvasPageState extends State<LauncherCanvasPage> {
   static const launcherNoteId = 'launcher-canvas';
-  final store = NoteStore(directoryProvider: noteDirectory);
+  late final NoteStore store = NoteStore(
+    directoryProvider: widget.directoryProvider ?? noteDirectory,
+  );
   Note? note;
+
+  /// Set when the stored note could not be read, so the app offers a retry
+  /// instead of spinning at a blank screen forever.
+  String? loadFailure;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    unawaited(_load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(UpdateService.prompt(context, automatic: true));
     });
   }
 
   Future<void> _load() async {
-    final loaded = await store.loadNote(launcherNoteId) ??
-        Note(
-          id: launcherNoteId,
-          title: 'Launcher note',
-          text: '',
-          updated: DateTime.now().toUtc(),
-          strokes: [],
-        );
-    if (mounted) {
-      setState(() => note = loaded);
+    try {
+      final loaded = await store.loadNote(launcherNoteId) ??
+          Note(
+            id: launcherNoteId,
+            title: 'Launcher note',
+            text: '',
+            updated: DateTime.now().toUtc(),
+            strokes: [],
+          );
+      if (!mounted) return;
+      setState(() {
+        note = loaded;
+        loadFailure = null;
+      });
+    } catch (error) {
+      // Reading the folder can fail for a reason the user can fix — a Drive
+      // folder that moved, a full disk, a permission revocation — and a
+      // spinner says nothing about any of them.
+      if (!mounted) return;
+      setState(() => loadFailure = '$error');
     }
+  }
+
+  Future<void> _retryLoad() async {
+    // Clearing the message first shows the spinner again: a retry that leaves
+    // the old error on screen looks like a retry that did nothing.
+    setState(() => loadFailure = null);
+    await _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final loaded = note;
     if (loaded == null) {
+      final failure = loadFailure;
+      if (failure != null) {
+        return Scaffold(
+          body: NoteLoadFailure(
+            message: failure,
+            onRetry: () => unawaited(_retryLoad()),
+          ),
+        );
+      }
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return EditorPage(note: loaded, launcherMode: true);
   }
 }
 
+/// Shown in place of the note list or the editor when the note folder could
+/// not be read. A retry is part of the widget because the causes are usually
+/// transient or user-fixable — a mounted folder that was briefly away, a full
+/// disk, a revoked permission — and leaving no way back means restarting the
+/// app is the only option the screen offers.
+class NoteLoadFailure extends StatelessWidget {
+  const NoteLoadFailure({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.folder_off_outlined, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                'Notes could not be opened',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try again'),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
 class LibraryPage extends StatefulWidget {
-  const LibraryPage({super.key});
+  const LibraryPage({super.key, this.directoryProvider});
+
+  /// Overridable so a test can make the note folder unreachable. Production
+  /// always uses [noteDirectory].
+  final NoteDirectoryProvider? directoryProvider;
+
   @override
   State<LibraryPage> createState() => _LibraryPageState();
 }
 
 class _LibraryPageState extends State<LibraryPage> {
-  final store = NoteStore(directoryProvider: noteDirectory);
+  late final NoteStore store = NoteStore(
+    directoryProvider: widget.directoryProvider ?? noteDirectory,
+  );
   late final DriveSyncService syncService;
   List<Note> notes = [];
   bool loading = true;
+
+  /// Set when the note folder could not be read, so the library offers a retry
+  /// instead of showing an empty list that hides the user's notes.
+  String? loadFailure;
+
+  /// An unreachable Drive folder is reported once per visit instead of on every
+  /// automatic sync, and the flag clears as soon as a sync succeeds again.
+  bool reportedSyncProblem = false;
+
+  /// Unreadable remote files stay in the folder until the user fixes them, so
+  /// they are reported once per visit as well.
+  bool reportedSkippedFiles = false;
+
   @override
   void initState() {
     super.initState();
-    syncService = DriveSyncService(
-      store: store,
-      backend: createPlatformSyncBackend(
-        localNoteDirectory: noteDirectory,
-      ),
-    );
-    refresh();
+    syncService = sharedSyncService(store);
+    unawaited(refresh());
   }
 
   Future<void> refresh() async {
-    final loaded = await store.load();
-    if (mounted) {
+    try {
+      final loaded = await store.load();
+      if (!mounted) return;
       setState(() {
         notes = loaded;
         loading = false;
+        loadFailure = null;
       });
-      syncService.syncInBackground(
-        onResult: (_) => _reloadAfterBackgroundSync(),
+      syncService.syncInBackground(onResult: _reportBackgroundSync);
+    } catch (error) {
+      // An empty list here would read as "you have no notes", which is the one
+      // message that makes a user start writing over notes still on disk.
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        loadFailure = '$error';
+      });
+    }
+  }
+
+  void _reportBackgroundSync(DriveSyncResult result) {
+    if (!mounted) return;
+    unawaited(_reloadAfterBackgroundSync());
+    if (result.isSynced) {
+      reportedSyncProblem = false;
+      if (result.skippedRemoteFiles > 0 && !reportedSkippedFiles) {
+        reportedSkippedFiles = true;
+        _showSyncProblem(
+          '${result.skippedRemoteFiles} Drive file(s) could not be read '
+          'and were left untouched',
+        );
+      }
+      return;
+    }
+    reportedSkippedFiles = false;
+    if (result.status == DriveSyncStatus.unavailable && !reportedSyncProblem) {
+      reportedSyncProblem = true;
+      _showSyncProblem(
+        'The Google Drive folder is unavailable, so notes are not syncing',
       );
     }
   }
 
+  void _showSyncProblem(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _reloadAfterBackgroundSync() async {
-    final loaded = await store.load();
-    if (mounted) setState(() => notes = loaded);
+    try {
+      final loaded = await store.load();
+      if (!mounted) return;
+      setState(() {
+        notes = loaded;
+        loadFailure = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => loadFailure = '$error');
+    }
   }
 
   Future<void> openNote([Note? note]) async {
@@ -151,48 +295,72 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
         body: loading
             ? const Center(child: CircularProgressIndicator())
-            : notes.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.draw_outlined, size: 64, color: Colors.grey),
-                        SizedBox(height: 12),
-                        Text('Start your first handwritten note'),
-                      ],
-                    ),
+            : loadFailure != null && notes.isEmpty
+                ? NoteLoadFailure(
+                    message: loadFailure!,
+                    onRetry: () => unawaited(refresh()),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: notes.length,
-                    itemBuilder: (context, i) {
-                      final n = notes[i];
-                      return Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.note_alt_outlined),
-                          title: Text(n.title),
-                          subtitle: Text(
-                            '${n.strokes.length} strokes • ${n.updated.toLocal()}',
-                          ),
-                          onTap: () => openNote(n),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (v) async {
-                              if (v == 'delete') {
-                                await store.delete(n);
-                                refresh();
-                              }
-                            },
-                            itemBuilder: (_) => [
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                          ),
+                : notes.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.draw_outlined,
+                                size: 64, color: Colors.grey),
+                            SizedBox(height: 12),
+                            Text('Start your first handwritten note'),
+                          ],
                         ),
-                      );
-                    },
+                      )
+                    : _noteList(),
+      );
+
+  /// A failed read is never shown as an empty library: "start your first note"
+  /// over notes that are still on disk invites the user to write on top of
+  /// them. The retry is offered because the usual causes are fixable.
+  Widget _noteList() => ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: notes.length,
+        itemBuilder: (context, i) {
+          final n = notes[i];
+          return Card(
+            child: ListTile(
+              leading: const Icon(Icons.note_alt_outlined),
+              title: Text(n.title),
+              subtitle: Text(
+                '${n.strokes.length} strokes • ${n.updated.toLocal()}',
+              ),
+              onTap: () => openNote(n),
+              trailing: PopupMenuButton<String>(
+                onSelected: (v) async {
+                  if (v != 'delete') return;
+                  try {
+                    // delete leaves a tombstone behind, so the
+                    // deletion also reaches other devices.
+                    await store.delete(n);
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Could not delete the note: $error',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  await refresh();
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete'),
                   ),
+                ],
+              ),
+            ),
+          );
+        },
       );
 }
 
@@ -417,6 +585,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool showTasks = false;
   bool applyingExternalChange = false;
   bool hasUnsavedChanges = false;
+
+  /// Reported once per editor visit so an unreachable Drive folder is visible
+  /// without nagging after every automatic sync.
+  bool reportedSyncProblem = false;
   bool isSaving = false;
   bool saveFailed = false;
   int _editRevision = 0;
@@ -461,12 +633,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       widget.note.rasterTiles,
       legacyPages: widget.note.rasterPages,
     );
-    syncService = DriveSyncService(
-      store: store,
-      backend: createPlatformSyncBackend(
-        localNoteDirectory: noteDirectory,
-      ),
-    );
+    syncService = sharedSyncService(store);
     driveSyncDebouncer = DriveSyncDebouncer(service: syncService);
     textFocusNode = FocusNode()
       ..addListener(() {
@@ -1356,8 +1523,26 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     syncService.syncInBackground(
       currentNoteId: widget.note.id,
       onResult: (result) {
-        if (!mounted ||
-            (hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
+        if (!mounted) return;
+        if (!result.isSynced) {
+          // An automatic sync must not nag while the folder was never chosen,
+          // but a folder that stopped working has to be surfaced once.
+          if (result.status == DriveSyncStatus.unavailable &&
+              !reportedSyncProblem) {
+            reportedSyncProblem = true;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'The Google Drive folder is unavailable, '
+                  'so notes are not syncing',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        reportedSyncProblem = false;
+        if ((hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
             isSaving ||
             isRasterizing ||
             active != null ||
@@ -1786,20 +1971,44 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         chooseFolder: chooseFolder,
         currentNoteId: widget.note.id,
       );
-      if (result == null && !chooseFolder) {
+      if (result != null && !result.isSynced && !chooseFolder) {
         result = await syncService.sync(
           chooseFolder: true,
           currentNoteId: widget.note.id,
         );
       }
       if (result == null) return;
+      if (!result.isSynced) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                result.status == DriveSyncStatus.notConfigured
+                    ? 'Choose a Google Drive folder to sync with'
+                    : 'Google Drive folder is unavailable',
+              ),
+              action: Platform.isAndroid
+                  ? SnackBarAction(
+                      label: 'Choose folder',
+                      onPressed: () => syncDrive(chooseFolder: true),
+                    )
+                  : null,
+            ),
+          );
+        }
+        return;
+      }
       final syncedCurrent = result.currentNote;
       if (syncedCurrent != null) _applySyncedNote(syncedCurrent);
       if (mounted) {
+        final skipped = result.skippedRemoteFiles;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Synced ${result.noteCount} notes with Google Drive',
+              skipped == 0
+                  ? 'Synced ${result.noteCount} notes with Google Drive'
+                  : 'Synced ${result.noteCount} notes with Google Drive '
+                      '($skipped remote file(s) were skipped)',
             ),
           ),
         );
