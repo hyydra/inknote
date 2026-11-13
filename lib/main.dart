@@ -95,15 +95,19 @@ class _LibraryPageState extends State<LibraryPage> {
   late final DriveSyncService syncService;
   List<Note> notes = [];
   bool loading = true;
+
+  /// An unreachable Drive folder is reported once per visit instead of on every
+  /// automatic sync, and the flag clears as soon as a sync succeeds again.
+  bool reportedSyncProblem = false;
+
+  /// Unreadable remote files stay in the folder until the user fixes them, so
+  /// they are reported once per visit as well.
+  bool reportedSkippedFiles = false;
+
   @override
   void initState() {
     super.initState();
-    syncService = DriveSyncService(
-      store: store,
-      backend: createPlatformSyncBackend(
-        localNoteDirectory: noteDirectory,
-      ),
-    );
+    syncService = sharedSyncService(store);
     refresh();
   }
 
@@ -114,10 +118,38 @@ class _LibraryPageState extends State<LibraryPage> {
         notes = loaded;
         loading = false;
       });
-      syncService.syncInBackground(
-        onResult: (_) => _reloadAfterBackgroundSync(),
+      syncService.syncInBackground(onResult: _reportBackgroundSync);
+    }
+  }
+
+  void _reportBackgroundSync(DriveSyncResult result) {
+    if (!mounted) return;
+    unawaited(_reloadAfterBackgroundSync());
+    if (result.isSynced) {
+      reportedSyncProblem = false;
+      if (result.skippedRemoteFiles > 0 && !reportedSkippedFiles) {
+        reportedSkippedFiles = true;
+        _showSyncProblem(
+          '${result.skippedRemoteFiles} Drive file(s) could not be read '
+          'and were left untouched',
+        );
+      }
+      return;
+    }
+    reportedSkippedFiles = false;
+    if (result.status == DriveSyncStatus.unavailable && !reportedSyncProblem) {
+      reportedSyncProblem = true;
+      _showSyncProblem(
+        'The Google Drive folder is unavailable, so notes are not syncing',
       );
     }
+  }
+
+  void _showSyncProblem(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _reloadAfterBackgroundSync() async {
@@ -177,10 +209,23 @@ class _LibraryPageState extends State<LibraryPage> {
                           onTap: () => openNote(n),
                           trailing: PopupMenuButton<String>(
                             onSelected: (v) async {
-                              if (v == 'delete') {
+                              if (v != 'delete') return;
+                              try {
+                                // delete leaves a tombstone behind, so the
+                                // deletion also reaches other devices.
                                 await store.delete(n);
-                                refresh();
+                              } catch (error) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Could not delete the note: $error',
+                                    ),
+                                  ),
+                                );
+                                return;
                               }
+                              await refresh();
                             },
                             itemBuilder: (_) => [
                               const PopupMenuItem(
@@ -417,6 +462,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool showTasks = false;
   bool applyingExternalChange = false;
   bool hasUnsavedChanges = false;
+
+  /// Reported once per editor visit so an unreachable Drive folder is visible
+  /// without nagging after every automatic sync.
+  bool reportedSyncProblem = false;
   bool isSaving = false;
   bool saveFailed = false;
   int _editRevision = 0;
@@ -456,12 +505,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       widget.note.rasterTiles,
       legacyPages: widget.note.rasterPages,
     );
-    syncService = DriveSyncService(
-      store: store,
-      backend: createPlatformSyncBackend(
-        localNoteDirectory: noteDirectory,
-      ),
-    );
+    syncService = sharedSyncService(store);
     driveSyncDebouncer = DriveSyncDebouncer(service: syncService);
     textFocusNode = FocusNode()
       ..addListener(() {
@@ -1295,8 +1339,26 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     syncService.syncInBackground(
       currentNoteId: widget.note.id,
       onResult: (result) {
-        if (!mounted ||
-            (hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
+        if (!mounted) return;
+        if (!result.isSynced) {
+          // An automatic sync must not nag while the folder was never chosen,
+          // but a folder that stopped working has to be surfaced once.
+          if (result.status == DriveSyncStatus.unavailable &&
+              !reportedSyncProblem) {
+            reportedSyncProblem = true;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'The Google Drive folder is unavailable, '
+                  'so notes are not syncing',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        reportedSyncProblem = false;
+        if ((hasUnsavedChanges && !rasterMigrationOnlyDirty) ||
             isSaving ||
             isRasterizing ||
             active != null ||
@@ -1725,20 +1787,44 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         chooseFolder: chooseFolder,
         currentNoteId: widget.note.id,
       );
-      if (result == null && !chooseFolder) {
+      if (result != null && !result.isSynced && !chooseFolder) {
         result = await syncService.sync(
           chooseFolder: true,
           currentNoteId: widget.note.id,
         );
       }
       if (result == null) return;
+      if (!result.isSynced) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                result.status == DriveSyncStatus.notConfigured
+                    ? 'Choose a Google Drive folder to sync with'
+                    : 'Google Drive folder is unavailable',
+              ),
+              action: Platform.isAndroid
+                  ? SnackBarAction(
+                      label: 'Choose folder',
+                      onPressed: () => syncDrive(chooseFolder: true),
+                    )
+                  : null,
+            ),
+          );
+        }
+        return;
+      }
       final syncedCurrent = result.currentNote;
       if (syncedCurrent != null) _applySyncedNote(syncedCurrent);
       if (mounted) {
+        final skipped = result.skippedRemoteFiles;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Synced ${result.noteCount} notes with Google Drive',
+              skipped == 0
+                  ? 'Synced ${result.noteCount} notes with Google Drive'
+                  : 'Synced ${result.noteCount} notes with Google Drive '
+                      '($skipped remote file(s) were skipped)',
             ),
           ),
         );

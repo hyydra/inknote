@@ -9,6 +9,11 @@ import 'package:notes_app/note_store.dart';
 
 class FakeSyncFolderBackend implements SyncFolderBackend {
   bool configured = true;
+
+  /// Whether a folder was chosen on this device at some point in the past,
+  /// which is what tells "sync not set up" apart from "sync is broken".
+  bool folderEverChosen = true;
+
   bool? lastChooseFolder;
   int readCount = 0;
   int writeCount = 0;
@@ -16,6 +21,9 @@ class FakeSyncFolderBackend implements SyncFolderBackend {
 
   /// Every payload this service handed to the folder, one entry per sync.
   final List<List<String>> uploads = [];
+
+  /// Every name the service asked the folder to remove, in order.
+  final List<String> deleted = [];
 
   @override
   Future<bool> configure({required bool chooseFolder}) async {
@@ -37,6 +45,15 @@ class FakeSyncFolderBackend implements SyncFolderBackend {
     uploads.add(files.keys.toList()..sort());
     this.files = {...this.files, ...files};
   }
+
+  @override
+  Future<void> deleteFiles(List<String> names) async {
+    deleted.addAll(names);
+    files = Map.of(files)..removeWhere((name, _) => names.contains(name));
+  }
+
+  @override
+  Future<bool> hasConfiguredFolder() async => folderEverChosen;
 }
 
 class PausedSyncFolderBackend implements SyncFolderBackend {
@@ -55,6 +72,12 @@ class PausedSyncFolderBackend implements SyncFolderBackend {
 
   @override
   Future<void> writeFiles(Map<String, String> files) async {}
+
+  @override
+  Future<void> deleteFiles(List<String> names) async {}
+
+  @override
+  Future<bool> hasConfiguredFolder() async => true;
 }
 
 Note note(String id, String title, DateTime updated) => Note(
@@ -165,13 +188,33 @@ void main() {
   test('automatic sync does not ask for a folder', () async {
     final directory = await Directory.systemTemp.createTemp('drive-sync-');
     addTearDown(() => directory.delete(recursive: true));
+    final backend = FakeSyncFolderBackend()
+      ..configured = false
+      ..folderEverChosen = false;
+    final service = DriveSyncService(
+      store: NoteStore(directoryProvider: () async => directory),
+      backend: backend,
+    );
+
+    final result = await service.sync();
+    expect(result?.status, DriveSyncStatus.notConfigured);
+    expect(result?.isSynced, isFalse);
+    expect(backend.lastChooseFolder, isFalse);
+  });
+
+  test('a folder chosen before but unreachable now is reported, not silent',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
     final backend = FakeSyncFolderBackend()..configured = false;
     final service = DriveSyncService(
       store: NoteStore(directoryProvider: () async => directory),
       backend: backend,
     );
 
-    expect(await service.sync(), isNull);
+    final result = await service.sync();
+    expect(result?.status, DriveSyncStatus.unavailable,
+        reason: 'the user still believes their notes are synced');
     expect(backend.lastChooseFolder, isFalse);
   });
 
@@ -239,5 +282,204 @@ void main() {
     expect(backend.readCount, 1);
     expect(backend.writeCount, 1);
     expect(debouncer.hasPendingSync, isFalse);
+  });
+
+  test('a deleted note does not come back from the Drive folder', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    final kept = note('kept', 'Kept', DateTime.utc(2026, 11, 11, 9));
+    final gone = note('gone', 'Gone', DateTime.utc(2026, 11, 11, 9));
+    await store.save(kept);
+    await store.save(gone);
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {
+        'kept.json': jsonEncode(kept.toJson()),
+        'gone.json': jsonEncode(gone.toJson()),
+      };
+    final service = DriveSyncService(store: store, backend: backend);
+
+    await store.deleteNote('gone', deleted: DateTime.utc(2026, 11, 11, 12));
+    final result = await service.sync();
+
+    expect(result?.noteCount, 1);
+    expect((await store.load()).map((item) => item.id), ['kept']);
+    expect(backend.files['gone.json'], isNull,
+        reason: 'the stale payload must leave the shared folder');
+    expect(backend.deleted, contains('gone.json'));
+    expect(backend.files['gone.deleted.json'], isNotNull,
+        reason: 'other devices need the deletion, not just a missing file');
+
+    await service.sync();
+    expect((await store.load()).map((item) => item.id), ['kept']);
+    expect(backend.files['gone.json'], isNull);
+    expect(backend.writeCount, 1,
+        reason: 'a settled deletion must not be uploaded again');
+  });
+
+  test('a deletion made on another device removes the local copy', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    final shared = note('shared', 'Shared', DateTime.utc(2026, 11, 11, 9));
+    await store.save(shared);
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {
+        'shared.json': jsonEncode(shared.toJson()),
+        'shared.deleted.json': jsonEncode(
+          NoteTombstone(
+            id: 'shared',
+            deleted: DateTime.utc(2026, 11, 11, 12),
+          ).toJson(),
+        ),
+      };
+    final service = DriveSyncService(store: store, backend: backend);
+
+    final result = await service.sync(currentNoteId: 'shared');
+
+    expect(result?.noteCount, 0);
+    expect(result?.currentNote, isNull);
+    expect(await store.loadNote('shared'), isNull);
+    expect(await File('${directory.path}/shared.json').exists(), isFalse);
+    expect(await File('${directory.path}/shared.deleted.json').exists(), isTrue,
+        reason: 'the deletion must survive a restart on this device');
+    expect(backend.deleted, contains('shared.json'));
+  });
+
+  test('editing a note after deleting it revives it everywhere', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    final gone = note('gone', 'Gone', DateTime.utc(2026, 11, 11, 9));
+    await store.save(gone);
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {'gone.json': jsonEncode(gone.toJson())};
+    final service = DriveSyncService(store: store, backend: backend);
+
+    await store.deleteNote('gone', deleted: DateTime.utc(2026, 11, 11, 12));
+    await service.sync();
+    expect(backend.files['gone.deleted.json'], isNotNull);
+
+    await store.save(note('gone', 'Gone reborn', DateTime.utc(2026, 11, 11, 13)));
+    final result = await service.sync();
+
+    expect(result?.noteCount, 1);
+    expect((await store.load()).single.title, 'Gone reborn');
+    expect(backend.files['gone.json'], contains('Gone reborn'));
+    expect(backend.files['gone.deleted.json'], isNull);
+    expect(backend.deleted, contains('gone.deleted.json'));
+    expect(await File('${directory.path}/gone.deleted.json').exists(), isFalse);
+  });
+
+  test('a stale Drive payload cannot hide a newer local edit', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    await store.save(
+      note('shared', 'After deletion', DateTime.utc(2026, 11, 11, 13)),
+    );
+    await store.writeTombstone(
+      NoteTombstone(id: 'shared', deleted: DateTime.utc(2026, 11, 11, 12)),
+    );
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {
+        'shared.json': jsonEncode(
+          note('shared', 'Before deletion', DateTime.utc(2026, 11, 11, 9))
+              .toJson(),
+        ),
+        'shared.deleted.json': jsonEncode(
+          NoteTombstone(
+            id: 'shared',
+            deleted: DateTime.utc(2026, 11, 11, 12),
+          ).toJson(),
+        ),
+      };
+    final service = DriveSyncService(store: store, backend: backend);
+
+    final result = await service.sync(currentNoteId: 'shared');
+
+    expect(result?.currentNote?.title, 'After deletion');
+    expect((await store.load()).single.title, 'After deletion');
+    expect(backend.files['shared.json'], contains('After deletion'));
+    expect(backend.files['shared.deleted.json'], isNull);
+    expect(await File('${directory.path}/shared.deleted.json').exists(), isFalse,
+        reason: 'the spent tombstone must be cleared locally too');
+  });
+
+  test('a payload hidden by a tombstone is dropped, not left to resurface',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    await store.save(note('gone', 'Gone', DateTime.utc(2026, 11, 11, 9)));
+    await store.writeTombstone(
+      NoteTombstone(id: 'gone', deleted: DateTime.utc(2026, 11, 11, 12)),
+    );
+    expect(await File('${directory.path}/gone.json').exists(), isTrue);
+
+    final backend = FakeSyncFolderBackend();
+    final service = DriveSyncService(store: store, backend: backend);
+
+    final result = await service.sync();
+
+    expect(result?.noteCount, 0);
+    expect(await File('${directory.path}/gone.json').exists(), isFalse);
+    expect(await File('${directory.path}/gone.json.bak').exists(), isFalse);
+    expect(backend.files['gone.deleted.json'], isNotNull,
+        reason: 'the deletion still has to reach other devices');
+  });
+
+  test('a Drive conflict copy of a deleted note is removed too', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    final gone = note('gone', 'Gone', DateTime.utc(2026, 11, 11, 9));
+    await store.save(gone);
+
+    // Drive names a concurrent edit "gone (1).json", so a stale copy of a
+    // deleted note does not have to sit at the canonical file name.
+    final backend = FakeSyncFolderBackend()
+      ..files = {'gone (1).json': jsonEncode(gone.toJson())};
+    final service = DriveSyncService(store: store, backend: backend);
+
+    await store.deleteNote('gone', deleted: DateTime.utc(2026, 11, 11, 12));
+    final result = await service.sync();
+
+    expect(result?.noteCount, 0);
+    expect(await store.load(), isEmpty);
+    expect(backend.files['gone (1).json'], isNull);
+    expect(backend.deleted, contains('gone (1).json'));
+  });
+
+  test('an unreadable Drive file does not abort the sync', () async {
+    final directory = await Directory.systemTemp.createTemp('drive-sync-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = NoteStore(directoryProvider: () async => directory);
+    final good = note('good', 'Good', DateTime.utc(2026, 11, 11, 9));
+
+    final backend = FakeSyncFolderBackend()
+      ..files = {
+        'good.json': jsonEncode(good.toJson()),
+        'broken.json': '{damaged',
+        'escape.json': jsonEncode(
+          note('../../escape', 'Escape', DateTime.utc(2026, 11, 11, 9)).toJson(),
+        ),
+      };
+    final service = DriveSyncService(store: store, backend: backend);
+
+    final result = await service.sync();
+
+    expect(result?.isSynced, isTrue);
+    expect(result?.noteCount, 1);
+    expect(result?.skippedRemoteFiles, 2);
+    expect((await store.load()).map((item) => item.id), ['good']);
+    expect(backend.files['broken.json'], '{damaged',
+        reason: 'a damaged file is left for manual recovery');
+    expect(await File('${directory.parent.path}/escape.json').exists(), isFalse,
+        reason: 'an unsafe remote id cannot write outside the note folder');
   });
 }
