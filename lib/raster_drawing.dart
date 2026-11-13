@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -40,40 +41,277 @@ class RasterTileKey {
   int get hashCode => Object.hash(page, column, row);
 }
 
+/// The tiles one drawing action replaced, held as PNG bytes. A tile that was
+/// not there before is recorded as absent, so taking the action back can
+/// remove it again.
+///
+/// Bytes rather than decoded images because a history has to be affordable: a
+/// 512×512 tile is a megabyte in the renderer and a few tens of kilobytes
+/// here.
+@immutable
+class RasterTileSnapshot {
+  final Map<RasterTileKey, Uint8List?> tiles;
+
+  const RasterTileSnapshot(this.tiles);
+}
+
+/// The undo and redo stacks for one note's drawing, bounded because every
+/// entry is the pixels a mark covered.
+class RasterHistory {
+  final int maxEntries;
+  final List<RasterTileSnapshot> _undo = [];
+  final List<RasterTileSnapshot> _redo = [];
+
+  RasterHistory({this.maxEntries = 30});
+
+  bool get canUndo => _undo.isNotEmpty;
+  bool get canRedo => _redo.isNotEmpty;
+
+  @visibleForTesting
+  int get undoDepth => _undo.length;
+
+  /// A mark was just made, and [covered] is what it changed. Whatever could
+  /// be redone is now unreachable: the drawing no longer leads to it.
+  void record(RasterTileSnapshot covered) {
+    _add(_undo, covered);
+    _redo.clear();
+  }
+
+  /// The step to take back, or nothing when there is no step. What the undo
+  /// replaces goes back on the other stack through [putRedo].
+  RasterTileSnapshot? takeUndo() => _undo.isEmpty ? null : _undo.removeLast();
+
+  /// The step to repeat, or nothing. [putUndo]'s counterpart.
+  RasterTileSnapshot? takeRedo() => _redo.isEmpty ? null : _redo.removeLast();
+
+  void putRedo(RasterTileSnapshot replaced) => _add(_redo, replaced);
+
+  void putUndo(RasterTileSnapshot replaced) => _add(_undo, replaced);
+
+  void clear() {
+    _undo.clear();
+    _redo.clear();
+  }
+
+  void _add(List<RasterTileSnapshot> stack, RasterTileSnapshot value) {
+    stack.add(value);
+    if (stack.length > maxEntries) stack.removeAt(0);
+  }
+}
+
 class RasterDrawingStore {
   static const int tileSize = 512;
 
   int width;
   int pageHeight;
+
+  /// The tiles held as pixels. A tile that the note has but this map does not
+  /// is still there, as the bytes it was read as in [_encodedTiles], and comes
+  /// back through [ensureResident] when the paper or a stroke reaches for it.
   final Map<RasterTileKey, ui.Image> tiles = {};
+
+  /// Every tile the note holds, as PNG bytes - the complete copy when a tile
+  /// is not in [tiles], a cache of it when it is.
   final Map<RasterTileKey, String> _encodedTiles = {};
   final Set<RasterTileKey> _dirtyTiles = {};
+  final Set<RasterTileKey> _decoding = {};
+  Map<RasterTileKey, Uint8List?>? _recording;
+  Future<void> _tileWork = Future<void>.value();
   bool _disposed = false;
 
+  /// Called when tiles arrive that nobody asked for by name, so the editor can
+  /// paint them. Set to a repaint notifier; it is called outside any queue,
+  /// and never after [dispose].
+  void Function()? onTilesDecoded;
+
   RasterDrawingStore({this.width = 0, this.pageHeight = 0});
+
+  /// Tiles the note holds, whether or not they are in memory.
+  int get tileCount => _allKeys.length;
+
+  /// Tiles currently held as pixels.
+  int get residentTileCount => tiles.length;
+
+  Iterable<RasterTileKey> get _allKeys =>
+      {...tiles.keys, ..._encodedTiles.keys};
+
+  Iterable<RasterTileKey> get tileKeys => List.unmodifiable(_allKeys);
+
+  Iterable<RasterTileKey> keysForPage(int page) =>
+      [for (final key in _allKeys) if (key.page == page) key];
+
+  /// Tile work that reads every tile, or swaps them in and out, runs one at a
+  /// time: a save encodes tiles one by one and a revert disposes and replaces
+  /// them, so the two beside each other would write half-swapped tiles, iterate
+  /// a map that is changing, or draw from an image the other just released.
+  ///
+  /// A failure still reaches the caller through the returned future; the queue
+  /// only forgets it, so one bad write cannot strand every tile operation
+  /// behind a rejected future.
+  Future<T> _serialize<T>(Future<T> Function() body) {
+    final started = _tileWork.then((_) => body());
+    _tileWork = started.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return started;
+  }
 
   @visibleForTesting
   int get dirtyTileCount => _dirtyTiles.length;
 
+  /// Runs [body] and returns the pixels it replaced, or null when it replaced
+  /// none. The store records each tile at the one place a tile changes, so an
+  /// action only ever costs the tiles it actually covered.
+  Future<RasterTileSnapshot?> record(Future<void> Function() body) async {
+    _ensureNotDisposed();
+    if (_recording != null) {
+      throw StateError('A raster action is already being recorded');
+    }
+    final replaced = <RasterTileKey, Uint8List?>{};
+    _recording = replaced;
+    try {
+      await body();
+    } finally {
+      _recording = null;
+    }
+    if (_disposed || replaced.isEmpty) return null;
+    return RasterTileSnapshot(replaced);
+  }
+
+  /// Puts [snapshot] back and returns the pixels it replaced, so the same step
+  /// can be repeated later. A tile recorded as absent is taken away again, and
+  /// every tile touched is marked dirty so the next write saves the note as it
+  /// now is.
+  Future<RasterTileSnapshot> restore(RasterTileSnapshot snapshot) =>
+      _serialize(() => _restore(snapshot));
+
+  Future<RasterTileSnapshot> _restore(RasterTileSnapshot snapshot) async {
+    _ensureNotDisposed();
+    final replaced = <RasterTileKey, Uint8List?>{};
+    for (final entry in snapshot.tiles.entries) {
+      final current = tiles[entry.key];
+      // A tile the undo reaches but the paper never looked at is only in
+      // bytes, and those bytes are exactly what the step is about to throw
+      // away, so they are the redo entry.
+      replaced[entry.key] = current == null
+          ? _bytesFor(entry.key)
+          : await _encodeTileBytes(entry.key, current);
+      final bytes = entry.value;
+      if (bytes == null) {
+        current?.dispose();
+        tiles.remove(entry.key);
+        _encodedTiles.remove(entry.key);
+        continue;
+      }
+      final image = await decodeImageFromList(bytes);
+      if (_disposed) {
+        image.dispose();
+        break;
+      }
+      current?.dispose();
+      tiles[entry.key] = image;
+      _encodedTiles.remove(entry.key);
+      _dirtyTiles.add(entry.key);
+    }
+    return RasterTileSnapshot(replaced);
+  }
+
+  Future<Uint8List> _encodeTileBytes(RasterTileKey key, ui.Image image) async {
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (data == null) {
+      throw StateError('Could not encode drawing tile ${key.encoded}');
+    }
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
+
+  /// The bytes [key] is held as, or null when the note has no such tile. This
+  /// is how a tile that was never decoded can still take part in an undo
+  /// journal and a save: its pixels are already here, only unexpanded.
+  Uint8List? _bytesFor(RasterTileKey key) {
+    final encoded = _encodedTiles[key];
+    return encoded == null ? null : base64Decode(encoded);
+  }
+
+  /// Puts the saved tiles back. Only [firstPage] is turned into pixels: a tile
+  /// costs a whole 512 by 512 bitmap however little ink it carries, so a
+  /// twenty page note with four tiles a page measured 80 MB of decoded tiles
+  /// and 138 ms of decoding before the user had seen any of it. Everything
+  /// else stays as the bytes it was read as until the paper or a stroke asks.
   Future<void> load(
     Map<String, String> encodedTiles, {
     Map<int, String> legacyPages = const {},
+    int firstPage = 0,
   }) async {
     _ensureNotDisposed();
     for (final entry in encodedTiles.entries) {
       final key = RasterTileKey.parse(entry.key);
-      final image = await decodeImageFromList(base64Decode(entry.value));
-      if (_disposed) {
-        image.dispose();
-        return;
-      }
-      tiles[key]?.dispose();
-      tiles[key] = image;
       _encodedTiles[key] = entry.value;
+      if (key.page == firstPage) {
+        await _decodeTile(key, entry.value);
+        if (_disposed) return;
+      }
     }
     if (encodedTiles.isEmpty && legacyPages.isNotEmpty) {
       await _loadLegacyPages(legacyPages);
     }
+  }
+
+  Future<void> _decodeTile(RasterTileKey key, String encoded) async {
+    final image = await decodeImageFromList(base64Decode(encoded));
+    if (_disposed) {
+      image.dispose();
+      return;
+    }
+    tiles[key]?.dispose();
+    tiles[key] = image;
+  }
+
+  /// Brings [keys] into memory, and waits until they are there. Tiles already
+  /// in memory are skipped, tiles with no bytes to read are skipped too - a
+  /// page the note never drew on has no tiles at all, and asking for them is
+  /// how the paper asks whether there is anything to paint.
+  Future<void> ensureResident(Iterable<RasterTileKey> keys) =>
+      _serialize(() => _ensureResident(keys));
+
+  Future<void> _ensureResident(Iterable<RasterTileKey> keys) async {
+    _ensureNotDisposed();
+    final missing = <RasterTileKey>[];
+    for (final key in keys) {
+      if (tiles.containsKey(key) || !_encodedTiles.containsKey(key)) continue;
+      missing.add(key);
+    }
+    if (missing.isEmpty) return;
+    _decoding.addAll(missing);
+    try {
+      for (final key in missing) {
+        final encoded = _encodedTiles[key];
+        if (encoded == null || tiles.containsKey(key)) continue;
+        await _decodeTile(key, encoded);
+        if (_disposed) return;
+      }
+    } finally {
+      _decoding.removeAll(missing);
+    }
+    onTilesDecoded?.call();
+  }
+
+  /// The canvas's own ask, from inside a paint: it is about to draw [keys] and
+  /// cannot wait, so the decoding runs behind whatever the queue is doing and
+  /// the paper repaints through [onTilesDecoded] when they land. A page being
+  /// scrolled to for the first time shows its paper for a frame and its ink
+  /// the next, which is the trade for not carrying the notebook in memory.
+  void requestResident(Iterable<RasterTileKey> keys) {
+    if (_disposed) return;
+    final missing = [
+      for (final key in keys)
+        if (!tiles.containsKey(key) &&
+            !_decoding.contains(key) &&
+            _encodedTiles.containsKey(key))
+          key,
+    ];
+    if (missing.isEmpty) return;
+    unawaited(ensureResident(missing).catchError((Object _) {}));
   }
 
   Future<void> _loadLegacyPages(Map<int, String> encodedPages) async {
@@ -164,6 +402,15 @@ class RasterDrawingStore {
   }) async {
     _ensureNotDisposed();
     _prepare(canvasWidth, canvasPageHeight);
+    // Baking into a tile starts from the tile, so a tile the note has but the
+    // paper has not looked at since it was opened has to be expanded first -
+    // otherwise the mark lands on blank pixels and the ink that was already
+    // there is gone.
+    await _ensureResident([
+      for (final stroke in strokes)
+        ..._tilesTouchedBy(stroke, pageCount, blur: stroke.blur),
+      for (final stroke in strokes) ..._tilesReadBy(stroke, pageCount),
+    ]);
     final normalByTile = <RasterTileKey, List<Stroke>>{};
     for (final stroke in strokes) {
       if (stroke.blur) {
@@ -193,8 +440,10 @@ class RasterDrawingStore {
   }) async {
     _ensureNotDisposed();
     _prepare(canvasWidth, canvasPageHeight);
+    final touched = _tilesTouchedBy(stroke, pageCount).toList();
+    await _ensureResident(touched);
     var changed = false;
-    for (final key in _tilesTouchedBy(stroke, pageCount)) {
+    for (final key in touched) {
       if (!tiles.containsKey(key)) continue;
       await _updateTile(key, stroke, erase: true);
       changed = true;
@@ -202,39 +451,54 @@ class RasterDrawingStore {
     return changed;
   }
 
-  Future<Map<String, String>> encode() async {
+  Future<Map<String, String>> encode() => _serialize(_encodeTiles);
+
+  /// The note as it will be written: every tile it holds, decoded or not. A
+  /// save that walked only the resident tiles would quietly delete the pages
+  /// the editor had scrolled away from.
+  Future<Map<String, String>> _encodeTiles() async {
     _ensureNotDisposed();
     final encoded = <String, String>{};
-    for (final entry in tiles.entries) {
-      final cached = _encodedTiles[entry.key];
-      if (!_dirtyTiles.contains(entry.key) && cached != null) {
-        encoded[entry.key.encoded] = cached;
+    for (final key in _allKeys) {
+      final image = tiles[key];
+      final cached = _encodedTiles[key];
+      if (image == null) {
+        if (cached != null) encoded[key.encoded] = cached;
         continue;
       }
-      final data = await entry.value.toByteData(format: ui.ImageByteFormat.png);
-      _ensureNotDisposed();
-      if (data == null) {
-        throw StateError('Could not encode drawing tile ${entry.key.encoded}');
+      if (!_dirtyTiles.contains(key) && cached != null) {
+        encoded[key.encoded] = cached;
+        continue;
       }
-      final value = base64Encode(
-        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-      );
-      _encodedTiles[entry.key] = value;
-      _dirtyTiles.remove(entry.key);
-      encoded[entry.key.encoded] = value;
+      final bytes = await _encodeTileBytes(key, image);
+      _ensureNotDisposed();
+      final value = base64Encode(bytes);
+      _encodedTiles[key] = value;
+      _dirtyTiles.remove(key);
+      encoded[key.encoded] = value;
     }
     return encoded;
   }
 
-  ui.Image? tileAt(int page, double x, double y) =>
-      tiles[RasterTileKey(page, x ~/ tileSize, y ~/ tileSize)];
+  /// The tile holding a point of the drawing, in canvas coordinates. Null
+  /// means the note has no pixels there - either no tile at all, or one it
+  /// still holds only as bytes because nothing has asked for it yet.
+  ui.Image? tileAt(int page, double x, double y) {
+    final local = y - page * pageHeight.toDouble();
+    if (local < 0) return null;
+    return tiles[RasterTileKey(
+      page,
+      (x / tileSize).floor(),
+      (local / tileSize).floor(),
+    )];
+  }
 
   Offset tileOrigin(RasterTileKey key) => Offset(
         key.column * tileSize.toDouble(),
         key.page * pageHeight.toDouble() + key.row * tileSize.toDouble(),
       );
 
-  bool pageHasTiles(int page) => tiles.keys.any((key) => key.page == page);
+  bool pageHasTiles(int page) => _allKeys.any((key) => key.page == page);
 
   void paintPage(Canvas canvas, int page, {Paint? paint}) {
     for (final entry in tiles.entries) {
@@ -253,6 +517,9 @@ class RasterDrawingStore {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    onTilesDecoded = null;
+    _decoding.clear();
+    _recording = null;
     for (final image in tiles.values) {
       image.dispose();
     }
@@ -273,14 +540,10 @@ class RasterDrawingStore {
     width = math.max(width, canvasWidth);
   }
 
-  Iterable<RasterTileKey> _tilesTouchedBy(
-    Stroke stroke,
-    int pageCount, {
-    bool blur = false,
-  }) sync* {
-    if (pageCount <= 0 || stroke.points.isEmpty) return;
-    final padding = blur ? stroke.width * 0.75 + 1 : stroke.width / 2 + 1;
-    final bounds = _pointBounds(stroke).inflate(padding);
+  /// The tiles whose rectangle overlaps [bounds], clamped to the pages the
+  /// note has.
+  Iterable<RasterTileKey> _keysCovering(Rect bounds, int pageCount) sync* {
+    if (pageCount <= 0) return;
     final firstPage = (bounds.top / pageHeight).floor().clamp(0, pageCount - 1);
     final lastPage =
         (bounds.bottom / pageHeight).floor().clamp(0, pageCount - 1);
@@ -304,6 +567,30 @@ class RasterDrawingStore {
     }
   }
 
+  Iterable<RasterTileKey> _tilesTouchedBy(
+    Stroke stroke,
+    int pageCount, {
+    bool blur = false,
+  }) {
+    if (stroke.points.isEmpty) return const [];
+    // A blur mark reaches as far out as the widest pass of its ramp, which is
+    // wider than the brush, so the tiles it can touch are picked with that
+    // same reach.
+    final padding = blur ? blurReach(stroke.width) + 1 : stroke.width / 2 + 1;
+    return _keysCovering(_pointBounds(stroke).inflate(padding), pageCount);
+  }
+
+  /// Tiles a blurred stroke has to read as well as write. The bake softens
+  /// the page in a band around the mark - the ramp's reach plus the Gaussian's
+  /// own radius - and a tile sitting in that band but not in the write set
+  /// still has to be there when the buffer is drawn, or the softened copy has
+  /// a hole in it.
+  Iterable<RasterTileKey> _tilesReadBy(Stroke stroke, int pageCount) {
+    if (!stroke.blur || stroke.points.isEmpty) return const [];
+    final padding = blurReach(stroke.width) + _blurReadMargin + 1;
+    return _keysCovering(_pointBounds(stroke).inflate(padding), pageCount);
+  }
+
   Rect _tileGlobalBounds(RasterTileKey key) {
     final origin = tileOrigin(key);
     final tileWidth = math.min(tileSize, width - key.column * tileSize);
@@ -322,7 +609,6 @@ class RasterDrawingStore {
     final tileBounds = _tileGlobalBounds(key);
     if (tileBounds.width <= 0 || tileBounds.height <= 0) return;
     if (!erase) {
-      if (!_hasSourceIn(tileBounds.inflate(30), page: key.page)) return;
       await _updateBlurTile(key, stroke, previous, tileBounds);
       return;
     }
@@ -366,73 +652,148 @@ class RasterDrawingStore {
     await _replaceTile(key, previous, recorder, tileBounds.size);
   }
 
+  /// Pixels past the reach of the ramp that a blur bake still has to read: a
+  /// Gaussian wants its own radius on both sides, or the softened copy chews
+  /// at the edge of the buffer instead of fading.
+  static const double _blurReadMargin = 3 * blurSigma;
+
+  /// The page as it stands, blurred once, for the passes of the ramp to fade
+  /// over each other. Caller disposes the image.
+  Future<ui.Image> _softenSource(
+    Size size,
+    Offset origin, {
+    required int page,
+    required Rect sourceBounds,
+  }) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, Offset.zero & size);
+    canvas.saveLayer(
+      Offset.zero & size,
+      Paint()
+        ..blendMode = BlendMode.src
+        ..imageFilter = ui.ImageFilter.blur(
+          sigmaX: blurSigma,
+          sigmaY: blurSigma,
+        ),
+    );
+    _drawSourceTiles(
+      canvas,
+      origin,
+      page: page,
+      sourceBounds: sourceBounds,
+    );
+    canvas.restore();
+    final picture = recorder.endRecording();
+    try {
+      return await picture.toImage(size.width.ceil(), size.height.ceil());
+    } finally {
+      picture.dispose();
+    }
+  }
+
   Future<void> _updateBlurTile(
     RasterTileKey key,
     Stroke stroke,
     ui.Image? previous,
     Rect tileBounds,
   ) async {
-    const padding = 30.0;
-    final paddedSize = Size(
-      tileBounds.width + padding * 2,
-      tileBounds.height + padding * 2,
+    // The ramp only changes paper inside its own reach, so the buffer follows
+    // the stroke instead of the tile: softening a whole 512 pixel tile plus a
+    // 120 pixel margin, twice over, for a 44 pixel brush was the price of
+    // every commit and of every blurred stroke a legacy note carries.
+    final affected = _pointBounds(stroke)
+        .inflate(blurReach(stroke.width))
+        .intersect(tileBounds);
+    if (affected.isEmpty) return;
+    final page = Rect.fromLTWH(
+      0,
+      key.page * pageHeight.toDouble(),
+      width.toDouble(),
+      pageHeight.toDouble(),
     );
-    final paddedOrigin = tileBounds.topLeft - const Offset(padding, padding);
+    final buffer = affected.inflate(_blurReadMargin).intersect(page);
+    if (buffer.isEmpty || !_hasSourceIn(buffer, page: key.page)) return;
+    final bufferSize = buffer.size;
+    final bufferOrigin = buffer.topLeft;
     final localStroke = _translateStroke(
       stroke,
-      dx: -paddedOrigin.dx,
-      dy: -paddedOrigin.dy,
+      dx: -bufferOrigin.dx,
+      dy: -bufferOrigin.dy,
     );
     final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, Offset.zero & paddedSize);
+    final canvas = Canvas(recorder, Offset.zero & bufferSize);
     _drawSourceTiles(
       canvas,
-      paddedOrigin,
+      bufferOrigin,
       page: key.page,
-      sourceBounds: tileBounds.inflate(padding),
+      sourceBounds: buffer,
     );
-    final clip =
-        BlurStrokeClipper(localStroke, widthScale: 1.5).getClip(paddedSize);
-    final blurBounds = clip.getBounds().inflate(padding).intersect(
-          Offset.zero & paddedSize,
+    // One softened copy of the page, faded through the eight clips of the
+    // ramp in the same order the live preview stacks them. Every pass blurs
+    // with the same radius, so they can share the blur instead of each paying
+    // for it: committing only the narrowest pass, as this used to, stops the
+    // mark at a clip wall the moment the pen lifts.
+    final softened = await _softenSource(
+      bufferSize,
+      bufferOrigin,
+      page: key.page,
+      sourceBounds: buffer,
+    );
+    try {
+      for (final pass in blurRampPasses) {
+        final clip = BlurStrokeClipper(
+          localStroke,
+          widthScale: pass.$1,
+        ).getClip(bufferSize);
+        if (clip.getBounds().isEmpty) continue;
+        canvas.save();
+        canvas.clipPath(clip);
+        canvas.drawImage(
+          softened,
+          Offset.zero,
+          Paint()
+            ..color = Color.fromARGB((255 * pass.$2).round(), 255, 255, 255)
+            // The pass the preview paints at full opacity covers the ones
+            // under it, so the sharp ink there is gone from the screen. The
+            // tiles have no paper to hide behind, so the bake has to drop that
+            // ink the same way; fading it over the mark instead would leave
+            // the committed stroke sharper than the one being drawn.
+            ..blendMode = pass.$2 >= 1.0 ? BlendMode.src : BlendMode.srcOver,
         );
-    if (!blurBounds.isEmpty) {
-      canvas.save();
-      canvas.clipPath(clip);
-      canvas.saveLayer(
-        blurBounds,
-        Paint()
-          ..blendMode = BlendMode.src
-          ..imageFilter = ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-      );
-      _drawSourceTiles(
-        canvas,
-        paddedOrigin,
-        page: key.page,
-        sourceBounds: tileBounds.inflate(padding),
-      );
-      canvas.restore();
-      canvas.restore();
+        canvas.restore();
+      }
+    } finally {
+      softened.dispose();
     }
     final picture = recorder.endRecording();
-    late final ui.Image paddedImage;
+    late final ui.Image bufferImage;
     try {
-      paddedImage = await picture.toImage(
-        paddedSize.width.ceil(),
-        paddedSize.height.ceil(),
+      bufferImage = await picture.toImage(
+        bufferSize.width.ceil(),
+        bufferSize.height.ceil(),
       );
     } finally {
       picture.dispose();
     }
     final cropRecorder = ui.PictureRecorder();
-    final cropCanvas = Canvas(cropRecorder);
+    final cropCanvas = Canvas(cropRecorder, Offset.zero & tileBounds.size);
+    if (previous != null) {
+      cropCanvas.drawImage(previous, Offset.zero, Paint());
+    }
+    // Inside its reach the buffer holds the whole result, ink the ramp took
+    // away included, so that patch goes over the tile rather than into it.
     cropCanvas.drawImageRect(
-      paddedImage,
-      Rect.fromLTWH(padding, padding, tileBounds.width, tileBounds.height),
-      Offset.zero & tileBounds.size,
-      Paint(),
+      bufferImage,
+      Rect.fromLTWH(
+        affected.left - bufferOrigin.dx,
+        affected.top - bufferOrigin.dy,
+        affected.width,
+        affected.height,
+      ),
+      affected.shift(-tileBounds.topLeft),
+      Paint()..blendMode = BlendMode.src,
     );
-    paddedImage.dispose();
+    bufferImage.dispose();
     await _replaceTile(key, previous, cropRecorder, tileBounds.size);
   }
 
@@ -486,6 +847,19 @@ class RasterDrawingStore {
     ui.PictureRecorder recorder,
     Size size,
   ) async {
+    // Taking the recording before the new tile is rasterized means only one
+    // tile image is ever in flight, and it is the one place a tile changes, so
+    // the snapshot holds exactly the tiles this action covered and nothing
+    // else.
+    final recording = _recording;
+    if (recording != null && !_disposed && !recording.containsKey(key)) {
+      // A tile kept only as bytes still has to be recorded as those bytes:
+      // recording it as absent would let an undo drop the new tile where an
+      // older one had been sitting, unread.
+      recording[key] = previous != null
+          ? await _encodeTileBytes(key, previous)
+          : _bytesFor(key);
+    }
     final picture = recorder.endRecording();
     try {
       final image =
@@ -541,9 +915,18 @@ class RasterDrawingPainter extends CustomPainter {
   final List<Stroke> activeChunks;
   final Stroke? activePreview;
 
+  /// Every tile the note holds, resident or not, and what to ask the store for
+  /// when the clip reaches one that has not been decoded. A paint cannot wait
+  /// on a decode, so the page shows its paper for a frame and its ink on the
+  /// repaint [RasterDrawingStore.onTilesDecoded] asks for.
+  final Iterable<RasterTileKey> allTileKeys;
+  final void Function(Iterable<RasterTileKey> keys)? onNeedTiles;
+
   RasterDrawingPainter({
     required this.tiles,
     required this.pageHeight,
+    this.allTileKeys = const [],
+    this.onNeedTiles,
     this.legacyStrokes = const [],
     this.activeChunks = const [],
     this.activePreview,
@@ -552,8 +935,29 @@ class RasterDrawingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _paintContent(canvas, size, canvas.getLocalClipBounds());
+    final clipBounds = canvas.getLocalClipBounds();
+    if (onNeedTiles != null && allTileKeys.isNotEmpty) {
+      final missing = [
+        for (final key in allTileKeys)
+          if (!tiles.containsKey(key) && _keyBounds(key).overlaps(clipBounds))
+            key,
+      ];
+      if (missing.isNotEmpty) onNeedTiles!(missing);
+    }
+    _paintContent(canvas, size, clipBounds);
   }
+
+  /// Where a tile sits. A tile that is not decoded has no image to read its
+  /// exact size from, so the full tile is used: at the right and bottom edges
+  /// of a page this can ask for a tile the clip only grazes, which costs one
+  /// decode it may not have needed rather than a page that stays blank.
+  Rect _keyBounds(RasterTileKey key) => Rect.fromLTWH(
+        key.column * RasterDrawingStore.tileSize.toDouble(),
+        key.page * pageHeight.toDouble() +
+            key.row * RasterDrawingStore.tileSize.toDouble(),
+        RasterDrawingStore.tileSize.toDouble(),
+        RasterDrawingStore.tileSize.toDouble(),
+      );
 
   void _paintContent(Canvas canvas, Size size, Rect clipBounds) {
     for (final entry in tiles.entries) {

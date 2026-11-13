@@ -1,2 +1,2 @@
 const appVersion =
-    String.fromEnvironment('APP_VERSION', defaultValue: '0.4.22');
+    String.fromEnvironment('APP_VERSION', defaultValue: '0.4.23');

@@ -54,6 +54,13 @@ class MainActivity : FlutterActivity() {
                                 null
                             }
                         }
+                        "deleteFiles" -> {
+                            val names = call.argument<List<String>>("names") ?: emptyList()
+                            runSyncOperation(result) {
+                                deleteFiles(names)
+                                null
+                            }
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (error: Exception) {
@@ -266,6 +273,26 @@ class MainActivity : FlutterActivity() {
                 contentResolver, parent, "application/json", name
             ) ?: error("Could not create $name")
             writeText(uri, content, name)
+        }
+    }
+
+    /**
+     * Removes payloads from the shared folder so a deletion reaches other
+     * devices and a spent tombstone is cleaned up. Missing names are ignored:
+     * a payload may already be gone, and Drive mirrors deletions itself.
+     */
+    private fun deleteFiles(names: List<String>) {
+        if (names.isEmpty()) return
+        val parents = linkedSetOf(rootDocument(), syncFolder())
+        parents.forEach { parent ->
+            val existing = folderEntries(parent)
+            names.forEach { name ->
+                val entry = existing[name] ?: return@forEach
+                if (entry.mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    return@forEach
+                }
+                DocumentsContract.deleteDocument(contentResolver, entry.uri)
+            }
         }
     }
 

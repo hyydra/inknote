@@ -20,6 +20,13 @@ ThemeData buildPenninoTheme() => ThemeData(
         onPrimaryContainer: PenninoColors.paleGold,
         secondary: PenninoColors.steel,
         onSecondary: PenninoColors.leatherInset,
+        // A container role the scheme leaves out comes back as the base
+        // colour beside it, so the update row - which asks for
+        // `secondaryContainer` - was painting in the light steel of
+        // `secondary`. This is the same dark tone the leather surfaces use,
+        // tinted the way `secondary` is.
+        secondaryContainer: Color(0xff39424a),
+        onSecondaryContainer: PenninoColors.ink,
         surface: PenninoColors.leather,
         onSurface: PenninoColors.ink,
         surfaceContainerLowest: PenninoColors.leatherInset,

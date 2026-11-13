@@ -6,4 +6,3 @@ android/.kotlin/
 *.iml
 artifacts/
 build/
-pubspec.lock

@@ -216,10 +216,21 @@ class BlurStrokeClipper extends CustomClipper<Path> {
       widthScale != oldClipper.widthScale;
 }
 
-/// Eraser feather ramp as (widthScale, opacity), widest and faintest first.
-/// The widths and opacities match the blur preview's ramp, so erasing fades
-/// out over the same band that blurring softens.
-const List<(double, double)> strokeFeatherPasses = [
+/// How far a blurred mark smears, in logical pixels.
+///
+/// Every pass of the ramp blurs with this one radius and differs only in how
+/// wide its clip is and how faintly it lands, so stacking the ramp crossfades
+/// the sharp mark into the paper. Giving each pass its own radius, as this used
+/// to, left the wide passes with nothing to carry: their blur was too tight to
+/// push ink out to the clip it was drawn inside, and the mark still ended in a
+/// step.
+const double blurSigma = 12.0;
+
+/// The blur ramp as (widthScale, opacity), widest and faintest first. The live
+/// preview stacks these eight faded copies, and the bake into the page tiles
+/// composites the same eight in the same order, so a blurred mark keeps the
+/// edge it was shown with instead of stopping at a clip wall.
+const List<(double, double)> blurRampPasses = [
   (2.20, 0.06),
   (1.85, 0.09),
   (1.55, 0.13),
@@ -229,3 +240,13 @@ const List<(double, double)> strokeFeatherPasses = [
   (0.70, 0.54),
   (0.52, 1.00),
 ];
+
+/// Eraser feather ramp: the blur ramp itself, so erasing fades out over the
+/// same band that blurring softens.
+const List<(double, double)> strokeFeatherPasses = blurRampPasses;
+
+/// How far past its own centre a blur brush can change the paper: the widest
+/// pass of the ramp. The bake has to cover this much ground or the mark stops
+/// at the edge of the buffer instead of at the edge of the brush.
+double blurReach(double strokeWidth) =>
+    strokeWidth * 0.5 * blurRampPasses.first.$1;

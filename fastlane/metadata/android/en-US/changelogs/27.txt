@@ -1,0 +1,1 @@
+Notes save as you write and flush before closing, undo and redo cover the eraser, and pinch-zooming stops adding blank pages. Deletes sync to other devices, update downloads are verified, and an unreadable folder says so instead of spinning.
