@@ -100,6 +100,31 @@ repo. The files are self-contained scripts from their first commit
 (`380ea43`), each carrying its own copy of `expectEqual`. Finding 3 above is
 what is actually wrong.
 
+### 5. The gesture suite's waits are bounded by machine speed
+
+`widget_test/editor_gesture_test.dart` waits with `pumpUntilTrue`, which
+alternated a bare real-clock yield with a 100 ms fake pump and gave up after
+60 turns. Sixty turns is not a fixed amount of real time: counted with a
+temporary probe, the same wait took 9 turns and 0.12 s on this machine, and
+the CI run that failed spent its 60 turns in 0.76 s and never saw the write
+land. The waits that passed were already close to the ceiling - the autosave
+ones needed 14 and 16 of the 60 turns locally - so this was one slow runner
+away from failing tests that have nothing wrong with them.
+
+Observed as `closing the window writes what is on screen` failing on
+`feat/blur-edge-fidelity` (run `43413821181`, android) with
+`still waiting for the close request to be answered after six seconds of fake
+time`, while the commit under it was green and every local run of the same
+tree passed. Starving the loop to 5 turns reproduced the CI message exactly on
+a machine that otherwise passes, which is what separated the harness from the
+editor. Fixed in `4d7f34d`: each turn now sleeps 5 ms on the real clock and
+the wait is bounded by 10 s of wall time or 400 turns, with both numbers in
+the failure message.
+
+The general form for anyone adding a wait here: bound by time, never by
+iteration count, because the cost of an iteration is the thing that varies
+between a laptop and a shared runner.
+
 ## Patches
 
 Each is small enough to apply by hand. Verified locally against Flutter
