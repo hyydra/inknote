@@ -23,10 +23,14 @@ Future<void> openEditor(
 }) async {
   addTearDown(() {
     tester.view.viewInsets = FakeViewPadding();
-    tester.binding.setSurfaceSize(null);
+    tester.view.resetPhysicalSize();
   });
   tester.view.devicePixelRatio = 1;
-  await tester.binding.setSurfaceSize(size);
+  // `setSurfaceSize` only constrains layout: MediaQuery keeps reporting the
+  // 2400x1800 test default, so the app bar read itself as wide while the
+  // screen was 240 - a pairing no device can produce. Setting the view size
+  // moves the constraints and MediaQuery together.
+  tester.view.physicalSize = size;
   if (keyboard > 0) {
     tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
   }
