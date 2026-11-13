@@ -156,6 +156,44 @@ Future<void> pumpUntil(
 ) =>
     pumpUntilTrue(tester, () => tester.any(finder), waitingFor);
 
+/// Waits for a released mark to finish baking into the paper. The bake reads
+/// the tile it is about to replace so undo can put it back, which is real
+/// image work pumpAndSettle cannot see, and the live preview layers are the
+/// last thing the editor clears once that work is done.
+Future<void> pumpUntilMarkCommitted(WidgetTester tester) => pumpUntilTrue(
+      tester,
+      () =>
+          find.byKey(const Key('active-erase-layer')).evaluate().isEmpty &&
+          find.byType(ImageFiltered).evaluate().isEmpty,
+      'the mark to finish baking into the paper',
+    );
+
+/// The undo and redo buttons are the editor's own report that a step has
+/// landed: a swap goes through the real image codec, which the fake clock
+/// cannot see, and the opposite direction only becomes pressable once the
+/// step it took is on the other stack. Sound while the journal holds one
+/// step, which is what these tests are about.
+IconButton toolButton(WidgetTester tester, String tooltip) => tester
+    .widget<IconButton>(
+      find.ancestor(
+        of: find.byTooltip(tooltip),
+        matching: find.byType(IconButton),
+      ),
+    );
+
+Future<void> pumpUntilRevert(
+  WidgetTester tester,
+  String pressed,
+  String finished,
+) async {
+  await tester.tap(find.byTooltip(pressed));
+  await pumpUntilTrue(
+    tester,
+    () => toolButton(tester, finished).onPressed != null,
+    'the $pressed step to land on the paper',
+  );
+}
+
 /// Reads back what the editor wrote, on the real clock the file needs.
 Future<Map<String, dynamic>> storedNote(
   WidgetTester tester,
@@ -301,8 +339,7 @@ void main() {
     );
   });
 
-  testWidgets('a stationary tap rasterizes without drawing undo',
-      (tester) async {
+  testWidgets('a stationary tap rasterizes onto the paper', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final note = emptyNote();
@@ -317,11 +354,127 @@ void main() {
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(150, 100));
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     expect(painterHasPage(rasterPainter(tester), 0), isTrue);
-    expect(find.byIcon(Icons.undo), findsNothing);
-    expect(find.byIcon(Icons.redo), findsNothing);
+    expect(toolButton(tester, 'Undo the last mark').onPressed, isNotNull);
+  });
+
+  testWidgets('undo takes the mark back and redo puts it again',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(
+      toolButton(tester, 'Undo the last mark').onPressed,
+      isNull,
+      reason: 'nothing has been drawn yet, so there is nothing to take back',
+    );
+    expect(
+      toolButton(tester, 'Redo the mark you took back').onPressed,
+      isNull,
+      reason: 'nothing has been taken back yet',
+    );
+
+    final drawingCanvas = find.byType(InteractiveViewer);
+    final origin = tester.getTopLeft(drawingCanvas) + const Offset(150, 100);
+    final gesture = await tester.startGesture(origin);
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(60, 20));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
+
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      greaterThan(0),
+      reason: 'the drag leaves ink',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Undo the last mark',
+      'Redo the mark you took back',
+    );
+    expect(note.strokes, isEmpty);
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      0,
+      reason: 'undo puts the paper back the way it was',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Redo the mark you took back',
+      'Undo the last mark',
+    );
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 180, 110)),
+      greaterThan(0),
+      reason: 'redo puts the mark back',
+    );
+  });
+
+  testWidgets('undoing an erase brings the mark back, text and all',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = Note(
+      id: 'undo-erase-note',
+      title: 'Undo erase',
+      text: 'Keep this text',
+      updated: DateTime.utc(2026, 11, 11),
+      strokes: [
+        Stroke(
+          points: const [CanvasPoint(600, 350), CanvasPoint(700, 350)],
+          color: 0xff000000,
+          width: 8,
+          highlight: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Eraser'));
+    await tester.pump();
+    final canvas = find.byType(InteractiveViewer);
+    await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
+    await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 650, 350)),
+      0,
+      reason: 'the eraser took the ink out of the paper',
+    );
+
+    await pumpUntilRevert(
+      tester,
+      'Undo the last mark',
+      'Redo the mark you took back',
+    );
+    expect(
+      alphaOf(await rasterPixel(tester, rasterPainter(tester), 650, 350)),
+      greaterThan(0),
+      reason: 'undoing the erase gives the ink back',
+    );
+    expect(note.text, 'Keep this text');
+    expect(find.text('Keep this text'), findsOneWidget);
   });
 
   testWidgets('freehand moves update the active stroke', (tester) async {
@@ -559,6 +712,7 @@ void main() {
     expect(find.byType(ImageFiltered), findsWidgets);
     await gesture.up();
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
@@ -743,6 +897,7 @@ void main() {
     final canvas = find.byType(InteractiveViewer);
     await tester.tapAt(tester.getTopLeft(canvas) + const Offset(650, 350));
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
 
     expect(note.strokes, isEmpty);
     final pixel = await rasterPixel(
@@ -793,6 +948,7 @@ void main() {
 
     await gesture.up();
     await tester.pumpAndSettle();
+    await pumpUntilMarkCommitted(tester);
     expect(find.byKey(const Key('active-erase-layer')), findsNothing);
   });
 
