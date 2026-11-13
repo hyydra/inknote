@@ -55,9 +55,36 @@ android {
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                // Leave the release unsigned; the task-graph check below fails the
+                // build before an unsigned or debug-signed APK can be published.
+                null
             }
         }
+    }
+}
+
+// Fail loudly instead of publishing an unsigned or debug-signed release APK:
+// such an APK cannot be installed over any previous release.
+fun isReleaseRequested(): Boolean {
+    val requested = gradle.startParameter.taskNames
+    if (requested.isNotEmpty()) {
+        return requested.any { it.contains("Release") || it.contains("release") }
+    }
+    // No explicit task names (IDE or tooling API build): fall back to the
+    // scheduled task graph.
+    return gradle.taskGraph.allTasks.any { it.name.contains("Release") }
+}
+
+gradle.taskGraph.whenReady {
+    if (isReleaseRequested() && !keystorePropertiesFile.exists()) {
+        throw GradleException(
+            "android/key.properties is missing, so release builds cannot be signed. " +
+                "Refusing to fall back to the debug signing config: a debug-signed " +
+                "release APK cannot be installed over previous releases. " +
+                "Create android/key.properties (see " +
+                "https://docs.flutter.dev/deployment/android#signing-the-app) or " +
+                "build a debug variant instead."
+        )
     }
 }
 
