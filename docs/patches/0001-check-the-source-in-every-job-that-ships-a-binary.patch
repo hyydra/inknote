@@ -1,0 +1,78 @@
+From df08ddb7de0ea639f7cd867ba0a938b803b37b7b Mon Sep 17 00:00:00 2001
+From: hyydra <ptralb@gmail.com>
+Date: Fri, 13 Nov 2026 17:00:07 +0100
+Subject: [PATCH] Check the source in every job that ships a binary, and gate
+ the release on it
+
+---
+ .github/workflows/android-apk.yml              |  3 ++-
+ .github/workflows/release.yml                  | 18 ++++++++++++++++++
+ {widget_test => test}/editor_gesture_test.dart |  0
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+ rename {widget_test => test}/editor_gesture_test.dart (100%)
+
+diff --git a/.github/workflows/android-apk.yml b/.github/workflows/android-apk.yml
+index f54d171..a907ba3 100644
+--- a/.github/workflows/android-apk.yml
++++ b/.github/workflows/android-apk.yml
+@@ -26,7 +26,6 @@ jobs:
+       - run: flutter pub get
+       - run: flutter analyze
+       - run: flutter test
+-      - run: flutter test widget_test/editor_gesture_test.dart
+       - run: flutter build apk --debug
+ 
+   linux:
+@@ -53,6 +52,8 @@ jobs:
+           flutter-version: '3.47.5'
+           channel: stable
+       - run: flutter pub get
++      - run: flutter analyze
++      - run: flutter test
+       - run: flutter build windows
+       - name: Build Windows installer
+         shell: pwsh
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 7838e78..0613c91 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -8,7 +8,24 @@ permissions:
+   contents: write
+ 
+ jobs:
++  # A tag can be pushed at a commit no workflow has checked - `release.yml`
++  # only answers to `v*`, and `Build Pennino` on main may still be running.
++  # Nothing ships until the source itself passes.
++  validate:
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++    steps:
++      - uses: actions/checkout@v4
++      - uses: subosito/flutter-action@v2
++        with:
++          flutter-version: '3.47.5'
++          channel: stable
++      - run: flutter pub get
++      - run: flutter analyze
++      - run: flutter test
++
+   android:
++    needs: validate
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+@@ -51,6 +68,7 @@ jobs:
+           path: Pennino-Android.apk
+ 
+   windows:
++    needs: validate
+     runs-on: windows-latest
+     steps:
+       - uses: actions/checkout@v4
+diff --git a/widget_test/editor_gesture_test.dart b/test/editor_gesture_test.dart
+similarity index 100%
+rename from widget_test/editor_gesture_test.dart
+rename to test/editor_gesture_test.dart
+-- 
+2.53.0
+

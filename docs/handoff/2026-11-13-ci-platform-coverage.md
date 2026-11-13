@@ -210,13 +210,35 @@ vanishing.
 
 ## Still open
 
-- Four patches are listed above; three of them edit `.github/workflows/` and
-  are blocked on the `workflow` scope. Rewriting the six legacy suites is the
-  one that needs no permission at all and turns 24 counted checks into 52, so
-  it is worth doing before any of the others.
+- Three of the four patches edit `.github/workflows/` and cannot be pushed with
+  this credential. Measured, not assumed - pushing a branch that contained
+  `android-apk.yml` was refused by the server:
+
+  ```
+  ! [remote rejected] ci/checks-where-shipping-happens (refusing to allow a
+  Personal Access Token to create or update workflow
+  `.github/workflows/android-apk.yml` without `workflow` scope)
+  ```
+
+  All three are packaged as
+  [`docs/patches/0001-check-the-source-in-every-job-that-ships-a-binary.patch`](../patches/0001-check-the-source-in-every-job-that-ships-a-binary.patch),
+  which applies with `git am` and was checked against current main with
+  `git apply --check` (exit 0). On that branch, locally: `flutter analyze`
+  clean, and `flutter test` reports `+112` in 25 s once the gesture suite lives
+  under `test/` - so the explicit path step in the android job is no longer
+  needed, and the windows job gains 112 checks it has never run.
+- The fourth patch is done: PR #50 rewrites the six legacy files as
+  `package:flutter_test` suites. `flutter test` went from `+68` to `+103`
+  against main's tree, and the failure path was probed in both directions - a
+  mutated assertion in the first test and another in the last each failed the
+  run with exit 1, which the old shape dropped silently.
+- The counts in "What runs where" and finding 3 are the state at `5e6d678`.
+  After PR #50 there are no printed checks left to discount, and once the
+  patch lands the linux and windows jobs run every suite in the repo.
 - `flutter analyze` on `test/` does not notice a file with no tests in it, so
   nothing in CI distinguishes "the suite got emptied" from "the suite passes".
-  Rewriting the legacy files is the only fix that closes that.
+  Rewriting the legacy files is the only fix that closes that, and PR #50 is
+  that fix.
 
 ## Don't repeat
 
@@ -224,7 +246,8 @@ vanishing.
   `flutter test`'s default path, so anything put there runs on exactly one of
   four jobs until the suite moves.
 - Do not read `+24 All tests passed!` as "the repo has 24 checks". It is 24
-  registered plus 28 printed.
+  registered plus 28 printed - the count PR #50 removes by making all of them
+  registered.
 - Do not copy `expectEqual` into a new test file because the files next to it
   have one; the four newer suites use package:test and that is the form that
   gets counted and named.
