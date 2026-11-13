@@ -6,6 +6,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show RenderBox, RenderEditable, RenderObject;
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
@@ -576,6 +578,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   late final TextEditingController taskController;
   final TransformationController transformationController =
       TransformationController();
+  /// The document field's wrapper, so the caret can be measured where the
+  /// field actually paints it.
+  final GlobalKey documentFieldKey = GlobalKey(debugLabel: 'document-field');
+  /// The box the canvas is clipped to: everything under it is bottom menu.
+  final GlobalKey canvasClipKey = GlobalKey(debugLabel: 'canvas-clip');
   final ValueNotifier<int> canvasRepaint = ValueNotifier(0);
   DrawTool tool = DrawTool.pen;
   Color strokeColor = Colors.blue.shade800;
@@ -708,6 +715,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     transformationController.dispose();
     canvasRepaint.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // A soft keyboard opening or a window resizing takes the bottom of the
+    // canvas away without a keystroke, which is the other way the line being
+    // written ends up behind the bottom menu. The frame has to run first:
+    // until then the canvas still has its old height.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && textFocusNode.hasFocus) _revealDocumentCaret();
+    });
   }
 
   @override
@@ -1328,6 +1346,70 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       appended = true;
     }
     if (appended) setState(() {});
+  }
+
+  /// How far from either edge of the visible canvas the caret is held.
+  static const double _caretKeepIn = 24;
+
+  /// The document field's live text layout, or null while the field is not on
+  /// screen.
+  ///
+  /// This is the only geometry that agrees with what the canvas paints: the
+  /// field merges the theme's line height onto the document style, so the
+  /// app's own `TextPainter` in `_layoutDocument` lays out measurably shorter
+  /// lines than the ones being drawn.
+  RenderEditable? _documentEditable() {
+    final root = documentFieldKey.currentContext?.findRenderObject();
+    if (root == null) return null;
+    RenderEditable? found;
+    void visit(RenderObject node) {
+      if (found == null && node is RenderEditable) found = node;
+      node.visitChildren(visit);
+    }
+
+    visit(root);
+    return found;
+  }
+
+  /// Moves the canvas the smallest amount that puts the line under the caret
+  /// back inside the window the canvas actually has.
+  ///
+  /// Typing grows the document downwards, and the soft keyboard takes the
+  /// bottom of that window away, so without this the line being written
+  /// slides under the bottom menu and the writer types blind. A caret already
+  /// inside the window leaves the canvas exactly where the writer put it, so
+  /// this can never fight a manual scroll.
+  void _revealDocumentCaret() {
+    final editable = _documentEditable();
+    final clip = canvasClipKey.currentContext?.findRenderObject();
+    if (editable == null || clip is! RenderBox) return;
+    final selection = textController.selection;
+    if (!selection.isValid || selection.extentOffset < 0) return;
+    final points = editable.getEndpointsForSelection(selection);
+    if (points.length != 1) return;
+    // Both edges are read in the clipped canvas's own coordinates, where the
+    // visible band is simply `0 .. clip.size.height` and a shift in it is a
+    // shift of the same size in the view matrix.
+    final caret = clip.globalToLocal(
+      editable.localToGlobal(points.single.point),
+    );
+    final lineTop = caret.dy - editable.preferredLineHeight;
+    var shift = 0.0;
+    if (caret.dy > clip.size.height - _caretKeepIn) {
+      shift = (clip.size.height - _caretKeepIn) - caret.dy;
+    } else if (lineTop < _caretKeepIn) {
+      shift = _caretKeepIn - lineTop;
+      // In a canvas shorter than one line the two rules disagree: pulling
+      // the caret back from the top would push it under the menu again, and
+      // the next keystroke would pull it back, so the page would shake by a
+      // whole line every other key. The menu is the edge the writer cannot
+      // see past, so the bottom one wins and the page stops moving.
+      shift = math.min(shift, clip.size.height - _caretKeepIn - caret.dy);
+    }
+    if (shift == 0) return;
+    final next = transformationController.value.clone();
+    next[13] += shift;
+    transformationController.value = next;
   }
 
   void move(PointerMoveEvent event) {
@@ -2589,6 +2671,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       // The document takes pointers only in text mode; every drawing tool
       // leaves the canvas to decide, so a stroke can cross live text.
       child: IgnorePointer(
+        key: documentFieldKey,
         ignoring: tool != DrawTool.text,
         child: TextField(
           key: const ValueKey('canvas-text-field-0'),
@@ -2597,6 +2680,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           onChanged: (_) {
             _growPagesForDocument();
             _markChanged();
+            // The layout has to run before the canvas can be moved to where
+            // the new line actually lands.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _revealDocumentCaret();
+            });
           },
           onTap: () => WidgetsBinding.instance
               .addPostFrameCallback((_) => _toggleChecklistAtSelection()),
@@ -3060,6 +3148,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     final canvasHeight =
                         canvasPageHeight * widget.note.pageCount;
                     return ClipRect(
+                      key: canvasClipKey,
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
                         onPointerDown: _canvasPointerDown,
