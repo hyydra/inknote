@@ -471,7 +471,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    rasterDrawing = RasterDrawingStore(
+    rasterDrawing = _createRasterStore(
       width: widget.note.rasterWidth,
       pageHeight: widget.note.rasterPageHeight,
     );
@@ -597,6 +597,22 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
+  /// A store this editor owns keeps only the tiles it has looked at as
+  /// pixels, and decodes the rest when the paper or a stroke reaches for them.
+  /// Whichever store is current has to be able to say so, or ink that arrives
+  /// after the frame it was asked for never gets painted.
+  RasterDrawingStore _createRasterStore({
+    required int width,
+    required int pageHeight,
+  }) =>
+      RasterDrawingStore(width: width, pageHeight: pageHeight)
+        ..onTilesDecoded = _notifyTilesDecoded;
+
+  void _notifyTilesDecoded() {
+    if (!mounted) return;
+    canvasRepaint.value++;
+  }
+
   Future<void> _loadRasterPages(
     RasterDrawingStore target,
     Map<String, String> encodedTiles, {
@@ -689,7 +705,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     final migrationPageHeight = canvasPageHeight.ceil();
     final migrationPageCount = widget.note.pageCount;
     final encodedTiles = await source.encode();
-    final migrated = RasterDrawingStore(
+    final migrated = _createRasterStore(
       width: source.width,
       pageHeight: source.pageHeight,
     );
@@ -1612,6 +1628,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       ),
     ).paint(canvas, size);
     if (rasterDrawing.pageHasTiles(0)) {
+      // The preview image is painted off the widget tree, so nothing asks the
+      // store for the tiles it is about to draw: they have to be here before
+      // the canvas walks them.
+      await rasterDrawing.ensureResident(rasterDrawing.keysForPage(0));
       canvas.save();
       canvas.scale(
         size.width / math.max(1, rasterDrawing.width),
@@ -1799,7 +1819,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _applySyncedNote(Note syncedCurrent) {
     if (identical(syncedCurrent, widget.note)) return;
     final oldRasterDrawing = rasterDrawing;
-    final nextRasterDrawing = RasterDrawingStore(
+    final nextRasterDrawing = _createRasterStore(
       width: syncedCurrent.rasterWidth,
       pageHeight: syncedCurrent.rasterPageHeight,
     );
@@ -2329,6 +2349,8 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                           painter: RasterDrawingPainter(
                             tiles: rasterDrawing.tiles,
                             pageHeight: canvasPageHeight.round(),
+                            allTileKeys: rasterDrawing.tileKeys,
+                            onNeedTiles: rasterDrawing.requestResident,
                             legacyStrokes: priorStrokes,
                           ),
                         ),
@@ -2718,6 +2740,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                                       painter: RasterDrawingPainter(
                                         tiles: rasterDrawing.tiles,
                                         pageHeight: canvasPageHeight.round(),
+                                        allTileKeys: rasterDrawing.tileKeys,
+                                        onNeedTiles:
+                                            rasterDrawing.requestResident,
                                         legacyStrokes: widget.note.strokes,
                                         activePreview:
                                             active == null || active!.blur

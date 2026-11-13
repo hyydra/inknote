@@ -25,12 +25,18 @@ Future<int> alphaAtStore(
   int x,
   int y,
 ) async {
-  final image = store.tileAt(page, x.toDouble(), y.toDouble());
+  final local = y - page * store.pageHeight;
+  final key = RasterTileKey(
+    page,
+    x ~/ RasterDrawingStore.tileSize,
+    local ~/ RasterDrawingStore.tileSize,
+  );
+  final image = store.tiles[key];
   if (image == null) return 0;
   return alphaAt(
     image,
     x % RasterDrawingStore.tileSize,
-    y % RasterDrawingStore.tileSize,
+    local % RasterDrawingStore.tileSize,
   );
 }
 
@@ -350,6 +356,286 @@ void main() {
     } finally {
       source.dispose();
       migrated.dispose();
+    }
+  });
+
+  /// A two page note, saved the way a note is saved: one tile per page, as
+  /// bytes. Used to put a store back into the state an editor starts in.
+  Future<Map<String, String>> twoPageTiles() async {
+    final source = RasterDrawingStore();
+    try {
+      await source.addStrokes(
+        [line(20), line(120)],
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 2,
+      );
+      return await source.encode();
+    } finally {
+      source.dispose();
+    }
+  }
+
+  test('opening a note decodes the page it opens on, not the notebook',
+      () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      expect(store.tileCount, 2);
+      expect(store.residentTileCount, 1);
+      expect(store.tileAt(1, 50, 120), isNull);
+      expect(await alphaAtStore(store, 0, 50, 20), greaterThan(0));
+
+      await store.ensureResident(store.keysForPage(1));
+      expect(store.residentTileCount, 2);
+      expect(await alphaAtStore(store, 1, 50, 120), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('a save writes the tiles it never decoded', () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      expect(store.residentTileCount, 1);
+      // Scrolling away and saving must not quietly drop the page that is only
+      // bytes: the note is written from every tile it holds.
+      expect(await store.encode(), tiles);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('a mark on a page that was never opened keeps the ink already there',
+      () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      await store.addStroke(
+        line(140),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 2,
+      );
+
+      expect(await alphaAtStore(store, 1, 50, 140), greaterThan(0));
+      expect(
+        await alphaAtStore(store, 1, 50, 120),
+        greaterThan(0),
+        reason: 'the bake started from the tile, not from blank paper',
+      );
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('an erase on a page that was never opened still reaches its ink',
+      () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      final erased = await store.eraseStroke(
+        Stroke(
+          points: const [CanvasPoint(50, 120)],
+          color: 0xff000000,
+          width: 14,
+          highlight: false,
+        ),
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 2,
+      );
+
+      expect(
+        erased,
+        isTrue,
+        reason: 'a page nobody has opened is still paper to erase',
+      );
+      expect(await alphaAtStore(store, 1, 50, 120), 0);
+      expect(await alphaAtStore(store, 1, 25, 120), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('undoing a mark on a page that was never opened gives back its ink',
+      () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      final covered = await store.record(
+        () => store.addStroke(
+              line(140),
+              canvasWidth: 100,
+              canvasPageHeight: 100,
+              pageCount: 2,
+            ),
+      );
+
+      expect(covered, isNotNull);
+      expect(
+        covered!.tiles[RasterTileKey(1, 0, 0)],
+        isNotNull,
+        reason: 'a tile held as bytes is still what the undo replaces',
+      );
+
+      await store.restore(covered);
+      expect(await alphaAtStore(store, 1, 50, 140), 0);
+      expect(await alphaAtStore(store, 1, 50, 120), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('the paper is told once when tiles it asked for arrive', () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      var notified = 0;
+      store.onTilesDecoded = () => notified++;
+
+      await store.ensureResident(store.keysForPage(1));
+      expect(notified, 1);
+
+      // Nothing new arrived, so the paper does not get asked to repaint.
+      await store.ensureResident(store.keysForPage(1));
+      await store.ensureResident(store.keysForPage(0));
+      expect(notified, 1);
+
+      // A page the note never drew on has no tiles to wait for either.
+      await store.ensureResident(store.keysForPage(7));
+      expect(notified, 1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('the paper can ask for tiles without waiting on them', () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      var notified = 0;
+      store.onTilesDecoded = () => notified++;
+
+      store.requestResident(store.keysForPage(1));
+      expect(
+        store.residentTileCount,
+        1,
+        reason: 'a paint cannot stop on a decode',
+      );
+
+      await pumpEventQueue();
+      expect(store.residentTileCount, 2);
+      expect(notified, 1);
+
+      // Nothing left to bring in, so nothing to repaint for.
+      store.requestResident(store.keysForPage(1));
+      store.requestResident(store.keysForPage(7));
+      await pumpEventQueue();
+      expect(notified, 1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('the paper asks for the tiles its clip reaches', () async {
+    final tiles = await twoPageTiles();
+    final store = RasterDrawingStore(width: 100, pageHeight: 100);
+    try {
+      await store.load(tiles, firstPage: 0);
+      final painter = RasterDrawingPainter(
+        tiles: store.tiles,
+        pageHeight: 100,
+        allTileKeys: store.tileKeys,
+        onNeedTiles: store.requestResident,
+      );
+
+      Future<void> paintViewport(double bottom) async {
+        final recorder = ui.PictureRecorder();
+        final canvas = ui.Canvas(
+          recorder,
+          ui.Rect.fromLTWH(0, 0, 100, bottom),
+        );
+        painter.paint(canvas, const ui.Size(100, 100));
+        recorder.endRecording().dispose();
+        await pumpEventQueue();
+      }
+
+      // The viewport is still on the page that was already decoded.
+      await paintViewport(100);
+      expect(store.residentTileCount, 1);
+
+      // Scrolled to the second page, the paint asks and the store answers.
+      await paintViewport(200);
+      expect(store.residentTileCount, 2);
+      expect(await alphaAtStore(store, 1, 50, 120), greaterThan(0));
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test('a blur bakes the same page whether or not it was opened', () async {
+    final source = RasterDrawingStore();
+    try {
+      // Ink that straddles a tile seam, so a blurred mark below it needs the
+      // tile above the one it writes.
+      await source.addStroke(
+        line(500, width: 40),
+        canvasWidth: 100,
+        canvasPageHeight: 1024,
+        pageCount: 1,
+      );
+      final tiles = await source.encode();
+
+      Future<List<int>> bake({required int firstPage}) async {
+        final store = RasterDrawingStore(width: 100, pageHeight: 1024);
+        try {
+          await store.load(tiles, firstPage: firstPage);
+          await store.addStroke(
+            Stroke(
+              points: const [CanvasPoint(50, 570)],
+              color: 0x00000000,
+              width: 44,
+              highlight: false,
+              blur: true,
+            ),
+            canvasWidth: 100,
+            canvasPageHeight: 1024,
+            pageCount: 1,
+          );
+          final edge = <int>[];
+          for (final y in [516, 524, 532, 544, 560]) {
+            edge.add(await alphaAtStore(store, 0, 50, y));
+          }
+          return edge;
+        } finally {
+          store.dispose();
+        }
+      }
+
+      final opened = await bake(firstPage: 0);
+      final unread = await bake(firstPage: 1);
+
+      expect(
+        unread[1],
+        greaterThan(0),
+        reason: 'the band under the seam has ink in it',
+      );
+      expect(
+        unread,
+        opened,
+        reason: 'the tile the blur reads cannot be missing from its buffer',
+      );
+    } finally {
+      source.dispose();
     }
   });
 
