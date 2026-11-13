@@ -19,6 +19,19 @@ Future<int> alphaAt(ui.Image image, int x, int y) async {
   return data.getUint8((y * image.width + x) * 4 + 3);
 }
 
+/// Pixels of a rendered image that carry any drawing at all. The home screen
+/// widget is the one place a page is flattened to a single small picture, so
+/// a blank one is a widget that shows blank paper rather than the note.
+Future<int> inkPixels(ui.Image image) async {
+  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  if (data == null) throw StateError('Preview image could not be read');
+  var painted = 0;
+  for (var byte = 3; byte < data.lengthInBytes; byte += 4) {
+    if (data.getUint8(byte) > 0) painted++;
+  }
+  return painted;
+}
+
 Future<int> alphaAtStore(
   RasterDrawingStore store,
   int page,
@@ -601,6 +614,41 @@ void main() {
       expect(await alphaAtStore(store, 1, 50, 120), greaterThan(0));
     } finally {
       store.dispose();
+    }
+  });
+
+  test('the pinned preview shows the first page that carries ink', () async {
+    final source = RasterDrawingStore();
+    try {
+      await source.addStrokes(
+        [line(120)],
+        canvasWidth: 100,
+        canvasPageHeight: 100,
+        pageCount: 2,
+      );
+      final tiles = await source.encode();
+
+      final store = RasterDrawingStore(width: 100, pageHeight: 100);
+      try {
+        await store.load(tiles);
+        expect(store.pageHasTiles(0), isFalse,
+            reason: 'the note was written below the first page');
+
+        final recorder = ui.PictureRecorder();
+        await store.paintPreview(ui.Canvas(recorder), const ui.Size(700, 420));
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(700, 420);
+        picture.dispose();
+        final ink = await inkPixels(image);
+        image.dispose();
+
+        expect(ink, greaterThan(0),
+            reason: 'a widget pinned from a later page must not be blank');
+      } finally {
+        store.dispose();
+      }
+    } finally {
+      source.dispose();
     }
   });
 

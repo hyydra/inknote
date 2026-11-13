@@ -29,4 +29,6 @@
 - [Publish v0.4.23](./handoff/2026-11-13-publish-v0-4-23.md) — complete; published from `924ca0f` through PR #48, assets verified from their downloaded bytes.
 - [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — merged through PR #47; the workflow patches it describes ship as files under `docs/patches/` and still need a token with the `workflow` scope to apply.
 - [Publish v0.4.24](./handoff/2026-11-13-publish-v0-4-24.md) — complete; published from `56aa817` through PR #52, assets verified from their downloaded bytes.
+- Raster residency waits — merged through PR #54 (`0a9da49`); two tests read `residentTileCount` after a fixed `pumpEventQueue()` and failed under CPU load, so the wait became a bounded condition. No separate handoff note.
+- [Pin the page that has ink](./handoff/2026-11-13-pin-the-page-that-has-ink.md) — opened as PR #55; the home-screen widget pinned blank paper for notes whose drawing starts below the first page. Not merged.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
