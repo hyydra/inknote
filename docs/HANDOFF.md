@@ -23,4 +23,5 @@
 - [Publish v0.4.19](./handoff/2026-11-12-publish-v0-4-19.md) — complete; published from `badb332`.
 - [Publish v0.4.20](./handoff/2026-11-12-publish-v0-4-20.md) — complete; published from `010b2b5`.
 - [Publish v0.4.21](./handoff/2026-11-12-publish-v0-4-21.md) — complete; published from `38075fe`.
+- [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — documented; the workflow patches need a token with the `workflow` scope.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
