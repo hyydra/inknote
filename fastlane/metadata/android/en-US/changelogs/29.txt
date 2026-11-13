@@ -1,0 +1,1 @@
+The home screen widget shows what you wrote: a note whose drawing starts below the first page now pins that page instead of blank paper, and a widget update that cannot be made says so instead of leaving the card empty.
