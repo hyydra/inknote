@@ -376,6 +376,27 @@ void main() {
     }
   }
 
+  /// Waits until the store holds [count] resident tiles, and gives up after
+  /// ten seconds.
+  ///
+  /// A decode is real work off the event loop, so draining the queue a fixed
+  /// number of times is only enough while the machine is otherwise idle: with
+  /// every core busy the tile can still be in flight and the count reads one
+  /// short. Nothing here brings a tile in - only the code under test asking
+  /// for it does - so waiting on the count cannot hide a paint that never
+  /// asked.
+  Future<void> waitUntilResident(
+    RasterDrawingStore store,
+    int count,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (store.residentTileCount < count) {
+      if (!DateTime.now().isBefore(deadline)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await pumpEventQueue();
+    }
+  }
+
   test('opening a note decodes the page it opens on, not the notebook',
       () async {
     final tiles = await twoPageTiles();
@@ -532,7 +553,7 @@ void main() {
         reason: 'a paint cannot stop on a decode',
       );
 
-      await pumpEventQueue();
+      await waitUntilResident(store, 2);
       expect(store.residentTileCount, 2);
       expect(notified, 1);
 
@@ -575,6 +596,7 @@ void main() {
 
       // Scrolled to the second page, the paint asks and the store answers.
       await paintViewport(200);
+      await waitUntilResident(store, 2);
       expect(store.residentTileCount, 2);
       expect(await alphaAtStore(store, 1, 50, 120), greaterThan(0));
     } finally {
