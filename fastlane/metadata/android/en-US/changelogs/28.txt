@@ -1,0 +1,1 @@
+The line you are writing stays on the paper: a new line is lifted above the bottom menu as you type, and so is the one already on screen when the keyboard appears.
