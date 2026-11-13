@@ -1,0 +1,1 @@
+Feathered eraser edges, and the home screen widget now shows the typed text of a pinned note instead of blank paper.
