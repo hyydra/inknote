@@ -3,9 +3,9 @@
 - Goal: the Android home-screen widget showed blank paper for notes whose
   drawing is not on the first page, and a preview that failed never said so.
 - Owner: Qoder.
-- State: implemented on `fix/widget-preview-page`, gated locally, opened as
-  PR #55. Not merged and not released; the device check is still the
-  reporter's.
+- State: merged through PR #55 (`c38c4fc`) and published in v0.4.25
+  (`59c7fe8`), where the released APK was checked at byte level for it. The
+  device check is still the reporter's.
 
 ## Log
 
@@ -39,7 +39,8 @@
 
 ## Running now
 
-- PR #55 is the only branch with CI. Nothing merges without the user's word.
+- Nothing. The fix is merged and released; the record PR for v0.4.25 carries
+  the documentation.
 
 ## Next
 
