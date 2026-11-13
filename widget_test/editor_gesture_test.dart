@@ -136,17 +136,41 @@ Future<void> pumpEditor(
 /// Runs the fake clock and the real one in turn until [done] reports true:
 /// the debounce only advances under fake time and the write behind it only
 /// advances under real time, so neither pump alone can ever see it finish.
+///
+/// Each turn hands the real clock a slice - five milliseconds, not a bare
+/// yield - and the fake clock 100 ms, and the wait is bounded by turns and by
+/// wall time, whichever runs out first. Bounding it by turns alone made the
+/// budget a function of how expensive a turn is on the machine: sixty of them
+/// took 0.76 s on a CI runner and 0.12 s here, so a flush that needed about a
+/// second of real time answered in the editor and timed out in CI, which is
+/// how `closing the window writes what is on screen` came to fail on one run
+/// and pass on every local one. The wall cap is what a slow disk gets; the
+/// turn cap keeps an app that never answers from pumping the fake clock
+/// through another hour before the message is printed.
 Future<void> pumpUntilTrue(
   WidgetTester tester,
   bool Function() done,
   String waitingFor,
 ) async {
-  for (var attempt = 0; attempt < 60; attempt++) {
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  const wallBudget = Duration(seconds: 10);
+  const fakeStep = Duration(milliseconds: 100);
+  const maxTurns = 400;
+  final watch = Stopwatch()..start();
+  var turns = 0;
+  while (true) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+    turns++;
     if (done()) return;
-    await tester.pump(const Duration(milliseconds: 100));
+    if (watch.elapsed > wallBudget || turns >= maxTurns) {
+      fail(
+        'still waiting for $waitingFor after ${watch.elapsedMilliseconds} ms '
+        'of real time and ${(turns * fakeStep.inMilliseconds / 1000).round()} '
+        's of fake time',
+      );
+    }
+    await tester.pump(fakeStep);
   }
-  fail('still waiting for $waitingFor after six seconds of fake time');
 }
 
 Future<void> pumpUntil(
