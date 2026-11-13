@@ -550,6 +550,41 @@ void main() {
     await second.up();
   });
 
+  testWidgets('a zoomed out page maps pen input by its real scale',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final note = emptyNote();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: EditorPage(note: note),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final editor = tester.state(find.byType(EditorPage)) as dynamic;
+    // Half size, offset by twenty and thirty pixels. Reading the scale from the
+    // longest basis vector of the matrix reports the untouched Z axis instead,
+    // so a zoomed out page would map the pen as if it were unscaled.
+    editor.transformationController.value =
+        Matrix4(0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, -20, -30, 0, 1);
+    await tester.pumpAndSettle();
+    expect(editor.isRasterizing, isFalse);
+
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.stylus);
+    await gesture.down(origin + const Offset(220, 230));
+    await gesture.moveTo(origin + const Offset(320, 230));
+    await tester.pump();
+
+    final points = editor.active.points as List<CanvasPoint>;
+    expect(points.first.x, closeTo(480, 0.01));
+    expect(points.first.y, closeTo(520, 0.01));
+    expect(points.last.x - points.first.x, closeTo(200, 0.01));
+    await gesture.up();
+  });
+
   testWidgets('a drifting pinch zoom appends no page while a pan still can',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
@@ -562,14 +597,14 @@ void main() {
       ),
     );
 
-    final viewerFinder = find.byType(InteractiveViewer);
-    final origin = tester.getTopLeft(viewerFinder);
+    final origin = tester.getTopLeft(find.byType(InteractiveViewer));
     final editor = tester.state(find.byType(EditorPage)) as dynamic;
-    // Parking the canvas at the bottom of the only page is what makes an
-    // appended page observable: the viewport already reaches the end, so every
-    // gesture read as a scroll grows the document by exactly one page.
+    // Zoomed in twice and parked at the end of the only page, the state a hand
+    // is really in when it pinches out to read the bottom. Any gesture read as
+    // a scroll grows the document by exactly one page, which is what this test
+    // measures.
     editor.transformationController.value =
-        Matrix4.translationValues(0, -600, 0);
+        Matrix4(2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, -1600, 0, 1);
     await tester.pump();
     final matrix = editor.transformationController.value;
     expect(
@@ -580,22 +615,22 @@ void main() {
 
     final first = await tester.createGesture(pointer: 1);
     final second = await tester.createGesture(pointer: 2);
-    await first.down(origin + const Offset(180, 180));
-    await second.down(origin + const Offset(280, 280));
+    await first.down(origin + const Offset(180, 480));
+    await second.down(origin + const Offset(480, 480));
 
-    // Zooming out moves the fingers towards each other while a hand that
-    // rotates drifts the pinch centre upwards. That drift is not a scroll, so
-    // the end of the document must not grow.
-    await first.moveTo(origin + const Offset(190, 190));
-    await second.moveTo(origin + const Offset(210, 205));
+    // Zooming out brings the fingers together while a hand that rotates drifts
+    // the pinch centre upwards. The spread dominates that movement, so it is a
+    // zoom and the end of the document must not grow.
+    await first.moveTo(origin + const Offset(240, 420));
+    await second.moveTo(origin + const Offset(420, 420));
     await tester.pump();
 
     expect(note.pageCount, 1, reason: 'zooming must never create a page');
 
-    // The same two fingers moving together by a hundred pixels are a scroll,
-    // and reaching the end still appends exactly one page.
-    await first.moveTo(origin + const Offset(190, 90));
-    await second.moveTo(origin + const Offset(210, 105));
+    // The same two fingers moving together by a hundred pixels keep their
+    // distance, so they are scrolling and the end appends exactly one page.
+    await first.moveTo(origin + const Offset(240, 320));
+    await second.moveTo(origin + const Offset(420, 320));
     await tester.pump();
 
     expect(note.pageCount, 2, reason: 'a two finger pan still scrolls');
