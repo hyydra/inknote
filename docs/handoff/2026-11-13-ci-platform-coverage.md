@@ -140,9 +140,14 @@ Each is small enough to apply by hand. Verified locally against Flutter
        - run: flutter build windows
 ```
 
-`flutter test` is platform-independent here: the suites that touch
-`Path_provider` and file IO run on the linux job already, and the whole set
-passes on windows-latest the same way the build does.
+`flutter test` is platform-independent in this repo as far as the tests are
+concerned: no test reads the host OS - the only `platform` mentions in either
+suite are `ThemeData(platform: TargetPlatform.windows)` overrides inside the
+tests, so the widgets under test do not care where they run, and the file IO
+suites write into `Directory.systemTemp`. But a Windows `flutter test` run is
+exactly what this job has never done, so this is the one patch here whose
+behaviour on windows-latest is predicted rather than measured - the first run
+will tell.
 
 ### Move the gesture suite into the default run
 
@@ -205,8 +210,10 @@ vanishing.
 
 ## Still open
 
-- All five patches above, blocked on the `workflow` scope; the last one is
-  ordinary Dart work that can proceed without it.
+- Four patches are listed above; three of them edit `.github/workflows/` and
+  are blocked on the `workflow` scope. Rewriting the six legacy suites is the
+  one that needs no permission at all and turns 24 counted checks into 52, so
+  it is worth doing before any of the others.
 - `flutter analyze` on `test/` does not notice a file with no tests in it, so
   nothing in CI distinguishes "the suite got emptied" from "the suite passes".
   Rewriting the legacy files is the only fix that closes that.
