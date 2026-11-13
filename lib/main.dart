@@ -1570,7 +1570,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   /// The installer path can terminate the process, so nothing may still be
   /// waiting for the manual save when it starts.
-  Future<void> _installAvailableUpdate() async {
+  ///
+  /// [update] is the release this screen is already showing. Without it the
+  /// check runs again, which costs a round trip and can come back with
+  /// nothing if the release moved in between.
+  Future<void> _installAvailableUpdate({UpdateInfo? update}) async {
     await _finalizeActiveStroke();
     if (hasUnsavedChanges) {
       await save(showMessage: false);
@@ -1585,7 +1589,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         return;
       }
     }
-    if (mounted) await UpdateService.prompt(context);
+    if (!mounted) return;
+    final known = update;
+    if (known == null) {
+      await UpdateService.prompt(context);
+    } else {
+      await UpdateService.install(context, known);
+    }
   }
 
   Future<void> _performSave({required bool showMessage}) async {
@@ -2297,7 +2307,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                 ),
               ),
               TextButton.icon(
-                onPressed: _installAvailableUpdate,
+                onPressed: () => _installAvailableUpdate(update: update),
                 style: TextButton.styleFrom(
                   foregroundColor: scheme.onSecondaryContainer,
                 ),
