@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import 'app_version.dart';
+import 'autosave_controller.dart';
 import 'canvas_editing.dart';
 import 'canvas_painter.dart';
 import 'drive_sync_service.dart';
@@ -552,7 +553,16 @@ class _EraserToolIconPainter extends CustomPainter {
 class EditorPage extends StatefulWidget {
   final Note note;
   final bool launcherMode;
-  const EditorPage({super.key, required this.note, this.launcherMode = false});
+
+  /// Overridable so a test can watch the notes the editor writes. Production
+  /// always uses [noteDirectory].
+  final NoteDirectoryProvider? directoryProvider;
+  const EditorPage({
+    super.key,
+    required this.note,
+    this.launcherMode = false,
+    this.directoryProvider,
+  });
   @override
   State<EditorPage> createState() => _EditorPageState();
 }
@@ -591,8 +601,11 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool reportedSyncProblem = false;
   bool isSaving = false;
   bool saveFailed = false;
+
+  /// True while a failed save is being reported by the window-close path, so
+  /// the same failure does not also arrive as an autosave message.
+  bool _flushingForExit = false;
   int _editRevision = 0;
-  Future<void>? _saveOperation;
   final Map<int, Offset> canvasPointerPositions = {};
 
   /// Pointer positions at the start of the current pinch frame, and the
@@ -613,7 +626,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   bool legacyRasterizationScheduled = false;
   bool rasterMigrationOnlyDirty = false;
   Future<void>? _strokeCommitOperation;
-  final store = NoteStore(directoryProvider: noteDirectory);
+  late final NoteStore store = NoteStore(
+    directoryProvider: widget.directoryProvider ?? noteDirectory,
+  );
+  late final AutosaveController autosave;
   late final DriveSyncService syncService;
   late final DriveSyncDebouncer driveSyncDebouncer;
 
@@ -635,6 +651,19 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
     syncService = sharedSyncService(store);
     driveSyncDebouncer = DriveSyncDebouncer(service: syncService);
+    // Created before any controller can report an edit: the listeners below
+    // schedule through it from the first keystroke.
+    autosave = AutosaveController(
+      onSave: () async {
+        await _performSave();
+        // _performSave keeps its error for the button instead of rethrowing,
+        // so the queue has to be told out loud. A drain that reports success
+        // after a failed write would never retry, and the note would go on
+        // unsaved with nobody saying so.
+        if (saveFailed) throw StateError('The note could not be written');
+      },
+      onStatusChanged: _onAutosaveStatus,
+    );
     textFocusNode = FocusNode()
       ..addListener(() {
         if (mounted) setState(() {});
@@ -657,6 +686,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    autosave.dispose();
     WidgetsBinding.instance.removeObserver(this);
     driveSyncDebouncer.dispose();
     titleController.dispose();
@@ -674,14 +704,58 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      // The editor deliberately has no per-keystroke autosave, but the process
-      // can be suspended or killed here, so flush what is already on screen.
-      if (hasUnsavedChanges && !isSaving) {
-        unawaited(save(showMessage: false));
+      // The process can be suspended and killed here, so what is on screen
+      // goes to disk through the same autosave the edits schedule.
+      if (hasUnsavedChanges) {
+        unawaited(autosave.saveNow());
       } else {
         unawaited(_finalizeActiveStroke());
       }
     }
+  }
+
+  @override
+  Future<ui.AppExitResponse> didRequestAppExit() async {
+    // Closing the desktop window ends the process, and the note a user was
+    // looking at is the one they expect to find when they open it again.
+    await _finalizeActiveStroke();
+    if (hasUnsavedChanges) {
+      _flushingForExit = true;
+      try {
+        await autosave.saveNow();
+      } finally {
+        _flushingForExit = false;
+      }
+    }
+    if (!mounted) return ui.AppExitResponse.exit;
+    if (saveFailed || hasUnsavedChanges) {
+      // Leaving now would drop the edits with nobody to say so, which is worse
+      // than a window that refuses to close and explains itself.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Pennino could not save this note, so it is staying open. '
+            'Save it, or copy the note out, before closing.',
+          ),
+        ),
+      );
+      return ui.AppExitResponse.cancel;
+    }
+    return ui.AppExitResponse.exit;
+  }
+
+  /// The controller decides when a save is due; the editor is the part that
+  /// has to say what happened, because an autosave that fails quietly is the
+  /// same as an autosave that never existed.
+  void _onAutosaveStatus(SaveStatus status) {
+    if (status != SaveStatus.failed || !mounted || _flushingForExit) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Pennino could not write this note. Your edits are still here.',
+        ),
+      ),
+    );
   }
 
   Future<void> _loadRasterPages(
@@ -812,6 +886,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (applyingExternalChange) return;
     rasterMigrationOnlyDirty = false;
     _editRevision++;
+    autosave.markChanged();
     if (hasUnsavedChanges) return;
     setState(() => hasUnsavedChanges = true);
   }
@@ -820,6 +895,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     if (isSaving || hasUnsavedChanges) return;
     rasterMigrationOnlyDirty = true;
     _editRevision++;
+    autosave.markChanged();
     setState(() => hasUnsavedChanges = true);
   }
 
@@ -1051,10 +1127,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   void begin(PointerDownEvent event) {
+    // A save in flight is not a reason to refuse the pen: with autosave one
+    // arrives roughly every second, and a canvas that ignores the first touch
+    // after each edit loses strokes. The write itself refuses a partly drawn
+    // stroke, and the revision counter picks the new one up on the next save.
     if (tool == DrawTool.hand ||
         tool == DrawTool.text ||
         isRasterizing ||
-        isSaving ||
         active != null ||
         activeEraser != null ||
         !rasterImagesLoaded ||
@@ -1558,16 +1637,6 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> save({bool showMessage = true}) {
-    final activeSave = _saveOperation;
-    if (activeSave != null) return activeSave;
-    final operation = _performSave(showMessage: showMessage);
-    _saveOperation = operation;
-    return operation.whenComplete(() {
-      if (identical(_saveOperation, operation)) _saveOperation = null;
-    });
-  }
-
   /// The installer path can terminate the process, so nothing may still be
   /// waiting for the manual save when it starts.
   ///
@@ -1577,7 +1646,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   Future<void> _installAvailableUpdate({UpdateInfo? update}) async {
     await _finalizeActiveStroke();
     if (hasUnsavedChanges) {
-      await save(showMessage: false);
+      await autosave.saveNow();
       if (saveFailed || hasUnsavedChanges) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1598,7 +1667,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _performSave({required bool showMessage}) async {
+  /// Flushes through the autosave queue so a manual press cannot start a
+  /// second write beside a save the controller is already running.
+  Future<void> _saveNow() => autosave.saveNow();
+
+  /// The one write path. Everything that needs this note on disk — the
+  /// debounce, a button press, a lifecycle pause, a window close, and the
+  /// widget and sync actions that refuse to run on an unsaved note — goes
+  /// through [autosave], so two of them can never race for the same file.
+  /// It reports through state only: the button says what the note is, and
+  /// [_onAutosaveStatus] is the single place a failed write is announced.
+  Future<void> _performSave() async {
     await _finalizeActiveStroke();
     final savingRevision = _editRevision;
     setState(() {
@@ -1615,29 +1694,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         hasUnsavedChanges = hasNewerChanges;
         if (!hasNewerChanges) rasterMigrationOnlyDirty = false;
       });
-      if (showMessage) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              hasNewerChanges
-                  ? 'Saved. Newer edits still need saving.'
-                  : 'Saved on this device',
-            ),
-          ),
-        );
-      }
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         isSaving = false;
         saveFailed = true;
         hasUnsavedChanges = true;
       });
-      if (showMessage) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Save failed: $error')),
-        );
-      }
     }
   }
 
@@ -1645,7 +1708,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     await _finalizeActiveStroke();
     if (!hasUnsavedChanges) return true;
     if (isSaving) {
-      await save(showMessage: false);
+      await autosave.saveNow();
       if (!mounted) return false;
       if (saveFailed || hasUnsavedChanges) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1676,7 +1739,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       ),
     );
     if (!mounted || saveBeforeLeaving != true) return false;
-    await save(showMessage: false);
+    await autosave.saveNow();
     if (saveFailed || hasUnsavedChanges) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1688,11 +1751,17 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return true;
   }
 
+  // The button used to be the only way anything reached the disk, so 'Save'
+  // was the label whatever the note's state. With autosave running it says
+  // what pressing it would do now: nothing, one write, or the retry that
+  // failed.
   String get saveLabel => isSaving
       ? 'Saving'
       : saveFailed
           ? 'Retry save'
-          : 'Save';
+          : hasUnsavedChanges
+              ? 'Save now'
+              : 'Saved';
 
   IconData get saveIcon => isSaving
       ? Icons.hourglass_top
@@ -1700,7 +1769,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
           ? Icons.error_outline
           : hasUnsavedChanges
               ? Icons.save
-              : Icons.save_outlined;
+              : Icons.check;
 
   Future<Uint8List> renderPreview() async {
     final recorder = ui.PictureRecorder();
@@ -1760,7 +1829,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   }
 
   Future<void> pinWidget() async {
-    await save(showMessage: false);
+    await autosave.saveNow();
     if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1964,7 +2033,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       }
       return;
     }
-    await save(showMessage: false);
+    await autosave.saveNow();
     if (saveFailed || hasUnsavedChanges) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2560,7 +2629,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
             actions: [
               if (MediaQuery.sizeOf(context).width >= 700)
                 TextButton.icon(
-                  onPressed: isSaving ? null : save,
+                  onPressed: isSaving ? null : _saveNow,
                   icon: Icon(saveIcon, size: 19),
                   label: Text(saveLabel),
                 )
@@ -2569,9 +2638,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                   tooltip: saveFailed
                       ? 'Save failed; retry'
                       : hasUnsavedChanges
-                          ? 'Save unsaved note'
-                          : 'Save note',
-                  onPressed: isSaving ? null : save,
+                          ? 'Save now; the note saves by itself otherwise'
+                          : 'All changes saved',
+                  onPressed: isSaving ? null : _saveNow,
                   icon: Icon(saveIcon),
                 ),
               PopupMenuButton<String>(
