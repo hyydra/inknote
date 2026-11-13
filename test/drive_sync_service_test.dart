@@ -87,6 +87,55 @@ Note note(String id, String title, DateTime updated) => Note(
       strokes: [],
     );
 
+/// Waits until [condition] holds, and gives up after ten seconds.
+///
+/// What the debouncer starts is real work off the event loop: a file write,
+/// an isolate to decode the remote payloads, and the folder read that follows
+/// them. A fixed pause therefore only looks like a decision while the machine
+/// has spare cores - with every core busy the same sync is still in flight
+/// when the counter is read, and it reads zero. Nothing here asks the service
+/// for anything, so a batch that never ran still fails what follows.
+Future<void> waitUntil(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (!condition()) {
+    if (!DateTime.now().isBefore(deadline)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    await pumpEventQueue();
+  }
+}
+
+/// Waits until [atLeast] syncs have reached the folder and then until the
+/// folder counters stop moving.
+///
+/// The service queues one sync behind the next, so a batch that should never
+/// have been started only shows up after the first one has finished. Stopping
+/// at the first write would read the same counts whether the debouncer
+/// collapsed three schedules into one sync or started three and was merely
+/// slower than the test. The quiet period is what turns "one so far" into
+/// "one, and nothing else came".
+Future<void> waitForSyncs(
+  FakeSyncFolderBackend backend, {
+  int atLeast = 1,
+}) async {
+  await waitUntil(() => backend.writeCount >= atLeast);
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  var seen = '${backend.readCount}:${backend.writeCount}';
+  var since = DateTime.now();
+  while (true) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await pumpEventQueue();
+    final now = '${backend.readCount}:${backend.writeCount}';
+    if (now != seen) {
+      seen = now;
+      since = DateTime.now();
+    } else if (DateTime.now().difference(since) >=
+        const Duration(milliseconds: 400)) {
+      return;
+    }
+    if (!DateTime.now().isBefore(deadline)) return;
+  }
+}
+
 void main() {
   test('newer Drive notes are imported and the merged library is uploaded',
       () async {
@@ -256,7 +305,7 @@ void main() {
     debouncer.schedule(currentNoteId: 'note-1');
     await Future<void>.delayed(const Duration(milliseconds: 10));
     debouncer.schedule(currentNoteId: 'note-1');
-    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await waitForSyncs(backend);
 
     expect(backend.readCount, 1);
     expect(backend.writeCount, 1);
@@ -277,7 +326,7 @@ void main() {
 
     debouncer.schedule(currentNoteId: 'note-1');
     debouncer.flush();
-    await Future<void>.delayed(const Duration(milliseconds: 30));
+    await waitForSyncs(backend);
 
     expect(backend.readCount, 1);
     expect(backend.writeCount, 1);
