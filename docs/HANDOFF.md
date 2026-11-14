@@ -36,4 +36,5 @@
 - Drive-sync residency waits — merged through PR #56 (`b4eaa4f`); the debouncer tests paused a fixed 80 ms and 30 ms and read zero counters under CPU load, so the waits became condition waits with a quiet period. No separate handoff note.
 - [Publish v0.4.25](./handoff/2026-11-13-publish-v0-4-25.md) — complete; published from `59c7fe8` through PR #57, assets verified from their downloaded bytes.
 - [The widget refreshes on save](./handoff/2026-11-14-widget-refreshes-on-save.md) — merged through PR #59 (`d6d244f`); the card stopped depending on the "Update home widget" button: a successful autosave debounces into a preview, the platform is asked whether a card exists before anything is rendered, and leaving the app flushes it behind the save. Shipped in v0.4.26.
+- [Publish v0.4.26](./handoff/2026-11-14-publish-v0-4-26.md) — complete; published from `57742f7` through PR #60, assets verified from their downloaded bytes and the change proved by a literal inside `libapp.so`.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
