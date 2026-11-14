@@ -212,7 +212,8 @@ vanishing.
 
 - Three of the four patches edit `.github/workflows/` and cannot be pushed with
   this credential. Measured, not assumed - pushing a branch that contained
-  `android-apk.yml` was refused by the server:
+  `android-apk.yml` was refused by the server, and the same push was refused
+  again on 2026-11-14 against `3fec600` with the same message:
 
   ```
   ! [remote rejected] ci/checks-where-shipping-happens (refusing to allow a
@@ -224,9 +225,10 @@ vanishing.
   [`docs/patches/0001-check-the-source-in-every-job-that-ships-a-binary.patch`](../patches/0001-check-the-source-in-every-job-that-ships-a-binary.patch),
   which applies with `git am` and was checked against current main with
   `git apply --check` (exit 0). On that branch, locally: `flutter analyze`
-  clean, and `flutter test` reports `+112` in 25 s once the gesture suite lives
-  under `test/` - so the explicit path step in the android job is no longer
-  needed, and the windows job gains 112 checks it has never run.
+  clean, and `flutter test` reports `+152` once the gesture suite lives under
+  `test/` (`+112` when this was first written; the suite has grown since) - so
+  the explicit path step in the android job is no longer needed, and the
+  windows job gains every check in the repo it has never run.
 - The fourth patch is done: PR #50 rewrites the six legacy files as
   `package:flutter_test` suites. `flutter test` went from `+68` to `+103`
   against main's tree, and the failure path was probed in both directions - a

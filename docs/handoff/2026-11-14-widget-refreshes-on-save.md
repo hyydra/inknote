@@ -4,8 +4,9 @@
   press, which is the remaining way "widget is not working on android" can be
   true.
 - Owner: Qoder.
-- State: implemented on `feat/widget-refresh-on-save`, gated locally. A
-  release is needed before it reaches a phone.
+- State: merged through PR #59 (`d6d244f`) and published in v0.4.26
+  (`57742f7`), where the released APK was checked at byte level for it. The
+  device check is still the reporter's.
 
 ## Log
 
@@ -42,12 +43,14 @@
 
 ## Running now
 
-- The change is on its branch with CI to come; nothing else is in flight.
+- Nothing. The change is merged and released as v0.4.26; the record PR carries
+  the documentation.
 
 ## Next
 
-- The fix only reaches a phone through a release. v0.4.25 was cut before this
-  change, so this needs v0.4.26.
+- The on-device check is outstanding, not the release: the card refreshes on
+  save in the shipped binary, and only a launcher in front of someone can show
+  it.
 - Still no Android device on this machine, so `hasWidgets` answering 0 for a
   launcher with no card and 1 with one is reasoned from the platform API, not
   observed. `adb devices` is empty.
