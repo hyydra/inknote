@@ -44,11 +44,12 @@
 
 ## Next
 
-- The widget is refreshed only from the editor's "Update home widget" entry,
-  never on save. A widget placed before the first pin therefore shows the
-  launcher's `initialLayout` — the cream card with "Pennino" and no image —
-  however many notes are written afterwards. Making save refresh it is a
-  product decision, not a bug fix, and is waiting on the user.
+- The widget was refreshed only from the editor's "Update home widget" entry,
+  never on save, so a card placed before the first pin showed the launcher's
+  `initialLayout` however many notes were written afterwards. That product
+  decision has since been taken and shipped: PR #59 (`d6d244f`) makes a
+  successful autosave schedule the preview, and it reached devices in v0.4.26.
+  Details in [widget-refreshes-on-save](./2026-11-14-widget-refreshes-on-save.md).
 - Whether this is the reporter's actual case still needs one device run: no
   Android device was attached to this machine (`adb devices` empty), so the
   evidence here is the code path and the picture it produces, not a
