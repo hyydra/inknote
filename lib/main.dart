@@ -1504,7 +1504,10 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     pinchRoundStart = null;
     pinchRoundMoved.clear();
     if (canvasPointerPositions.length == 1) {
-      if (_activateDocument(event.localPosition)) {
+      // The hand is for moving, never for placing a caret: a pan that began
+      // on a line of the document would otherwise hand the gesture to the
+      // text field and stop after one frame.
+      if (tool != DrawTool.hand && _activateDocument(event.localPosition)) {
         drawingPointer = null;
         return;
       }
@@ -1563,6 +1566,18 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       _trackPinchRound(beforeUpdate, event.pointer);
       return;
     }
+    if (tool == DrawTool.hand) {
+      if (drawingPointer != event.pointer) return;
+      // Same seam as the wheel and the pinch: the finger carries the paper,
+      // and the viewport rule still decides whether another page is needed.
+      final delta = event.localPosition - previousPosition;
+      final next = transformationController.value.clone();
+      next[12] += delta.dx;
+      next[13] += delta.dy;
+      transformationController.value = next;
+      _refreshCanvasViewport(userScrolledDown: delta.dy < -2);
+      return;
+    }
     if (drawingPointer == event.pointer) move(event);
   }
 
@@ -1618,7 +1633,9 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   void _canvasPointerEnd(PointerEvent event) {
     pinchRoundStart = null;
     pinchRoundMoved.clear();
-    if (drawingPointer == event.pointer && canvasPointerPositions.length == 1) {
+    if (drawingPointer == event.pointer &&
+        canvasPointerPositions.length == 1 &&
+        tool != DrawTool.hand) {
       end(event);
     }
     canvasPointerPositions.remove(event.pointer);
@@ -1654,6 +1671,57 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       _markChanged();
     }
   }
+
+  /// The page number floats on the view rather than on the paper, so it stays
+  /// in the corner however far the paper has been panned or zoomed. It names
+  /// the page under the top edge: zoomed out far enough to show several pages
+  /// at once, the one the reading starts from is still the top one.
+  Widget _canvasPageIndicator() => Positioned(
+        left: 12,
+        top: 12,
+        child: IgnorePointer(
+          child: ValueListenableBuilder<Matrix4>(
+            valueListenable: transformationController,
+            builder: (context, matrix, _) {
+              final scale = matrix.storage[0].abs();
+              final top = scale > 0.0001 ? -matrix.storage[13] / scale : 0.0;
+              final page = canvasPageHeight > 0
+                  ? (top / canvasPageHeight)
+                      .floor()
+                      .clamp(0, widget.note.pageCount - 1)
+                      .toInt()
+                  : 0;
+              return Semantics(
+                label: 'Page ${page + 1} of ${widget.note.pageCount}',
+                excludeSemantics: true,
+                child: DecoratedBox(
+                  key: const Key('page-indicator'),
+                  decoration: BoxDecoration(
+                    color: PenninoColors.leatherInset,
+                    borderRadius: const BorderRadius.all(Radius.circular(5)),
+                    border: Border.fromBorderSide(
+                      BorderSide(color: PenninoColors.gold),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    child: Text(
+                      '${page + 1}/${widget.note.pageCount}',
+                      style: const TextStyle(
+                        color: PenninoColors.paleGold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
 
   Future<void> _finalizeActiveStroke() {
     final activeCommit = _strokeCommitOperation;
@@ -2398,6 +2466,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
 
   Widget _drawingToolbar({required bool showStrokeRow}) {
     final tools = [
+      (DrawTool.hand, 'Hand'),
       (DrawTool.text, 'Text'),
       (DrawTool.pencil, 'Pencil'),
       (DrawTool.pen, 'Pen'),
@@ -2405,7 +2474,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       (DrawTool.eraser, 'Eraser'),
       (DrawTool.blur, 'Blur'),
     ];
-    // Seven squares with a gap between them need more width than a small
+    // Eight squares with a gap between them need more width than a small
     // phone has, and a slot narrower than a fingertip is not a control.
     // Below that the row keeps its slots and slides sideways instead.
     return LayoutBuilder(
@@ -3085,6 +3154,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     children: [
                       for (final entry in [
+                        (DrawTool.hand, 'Hand'),
                         (DrawTool.text, 'Text'),
                         (DrawTool.pencil, 'Pencil'),
                         (DrawTool.pen, 'Pen'),
@@ -3195,178 +3265,160 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
                     _scheduleLegacyRasterization();
                     final canvasHeight =
                         canvasPageHeight * widget.note.pageCount;
+                    final pattern = PaperPattern.values.firstWhere(
+                      (item) => item.name == widget.note.backgroundPattern,
+                      orElse: () => PaperPattern.lined,
+                    );
                     return ClipRect(
                       key: canvasClipKey,
-                      child: Listener(
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: _canvasPointerDown,
-                        onPointerMove: _canvasPointerMove,
-                        onPointerUp: _canvasPointerEnd,
-                        onPointerCancel: _canvasPointerEnd,
-                        onPointerSignal: _canvasPointerSignal,
-                        child: InteractiveViewer(
-                          transformationController: transformationController,
-                          alignment: Alignment.topLeft,
-                          constrained: false,
-                          panEnabled: false,
-                          scaleEnabled: false,
-                          boundaryMargin: const EdgeInsets.all(500),
-                          minScale: 0.25,
-                          maxScale: 5,
-                          child: SizedBox(
-                            width: canvasWidth,
-                            height: canvasHeight,
-                            child: Stack(
-                              key: const Key('canvas-layer-stack'),
-                              clipBehavior: Clip.none,
-                              children: [
-                                Positioned.fill(
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTapUp: tool == DrawTool.text
-                                        ? (_) => _focusDocumentAtEnd()
-                                        : null,
-                                    child: CustomPaint(
-                                      painter: StrokePainter(
-                                        const [],
-                                        null,
-                                        background: Color(
-                                          widget.note.backgroundColor,
-                                        ),
-                                        pattern: PaperPattern.values.firstWhere(
-                                          (item) =>
-                                              item.name ==
-                                              widget.note.backgroundPattern,
-                                          orElse: () => PaperPattern.lined,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  key: const Key('raster-drawing-layer'),
-                                  child: IgnorePointer(
-                                    child: CustomPaint(
-                                      painter: RasterDrawingPainter(
-                                        tiles: rasterDrawing.tiles,
-                                        pageHeight: canvasPageHeight.round(),
-                                        allTileKeys: rasterDrawing.tileKeys,
-                                        onNeedTiles:
-                                            rasterDrawing.requestResident,
-                                        legacyStrokes: widget.note.strokes,
-                                        activePreview:
-                                            active == null || active!.blur
-                                                ? null
-                                                : activePreview,
-                                        repaint: canvasRepaint,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                for (var index = 0;
-                                    index < activeStrokeChunks.length;
-                                    index++)
-                                  Positioned.fill(
-                                    key: ValueKey('active-stroke-chunk-$index'),
-                                    child: IgnorePointer(
-                                      child: RepaintBoundary(
-                                        child: CustomPaint(
-                                          painter: StrokePainter(
-                                            [activeStrokeChunks[index]],
-                                            null,
-                                            paintBackground: false,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                if (active != null && active!.blur)
-                                  _blurStrokeLayer(
-                                    active!,
-                                    priorStrokes: widget.note.strokes
-                                        .where((stroke) => !stroke.blur)
-                                        .toList(),
-                                    layerIndex: widget.note.strokes.length,
-                                    key: const Key('active-blur-layer'),
-                                  ),
-                                if (activeEraser != null)
-                                  _eraseStrokeLayer(
-                                    activeEraser!,
-                                    key: const Key('active-erase-layer'),
-                                  ),
-                                if (!rasterImagesLoaded || isRasterizing)
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    top: 0,
-                                    height: 2,
-                                    child: IgnorePointer(
-                                      child: Semantics(
-                                        label: 'Preparing drawing',
-                                        liveRegion: true,
-                                        child: ColoredBox(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                for (var page = 0;
-                                    page < widget.note.pageCount;
-                                    page++) ...[
-                                  if (page < widget.note.pageCount - 1)
-                                    Positioned(
-                                      key: ValueKey('page-divider-${page + 1}'),
-                                      left: 0,
-                                      right: 0,
-                                      top: canvasPageHeight * (page + 1) - 7,
-                                      height: 14,
-                                      child: const IgnorePointer(
-                                        child: ColoredBox(
-                                          color: Color(0xff34393d),
-                                        ),
-                                      ),
-                                    ),
-                                  Positioned(
-                                    key: ValueKey('page-number-${page + 1}'),
-                                    right: 18,
-                                    top: canvasPageHeight * (page + 1) - 34,
-                                    child: IgnorePointer(
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: PenninoColors.leatherInset,
-                                          borderRadius: BorderRadius.all(
-                                            Radius.circular(5),
-                                          ),
-                                          border: Border.fromBorderSide(
-                                            BorderSide(
-                                              color: PenninoColors.gold,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 3,
-                                          ),
-                                          child: Text(
-                                            '${page + 1}/${widget.note.pageCount}',
-                                            style: const TextStyle(
-                                              color: PenninoColors.paleGold,
-                                              fontSize: 12,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Listener(
+                              behavior: HitTestBehavior.opaque,
+                              onPointerDown: _canvasPointerDown,
+                              onPointerMove: _canvasPointerMove,
+                              onPointerUp: _canvasPointerEnd,
+                              onPointerCancel: _canvasPointerEnd,
+                              onPointerSignal: _canvasPointerSignal,
+                              child: InteractiveViewer(
+                                transformationController:
+                                    transformationController,
+                                alignment: Alignment.topLeft,
+                                constrained: false,
+                                panEnabled: false,
+                                scaleEnabled: false,
+                                boundaryMargin: const EdgeInsets.all(500),
+                                minScale: 0.25,
+                                maxScale: 5,
+                                child: SizedBox(
+                                  width: canvasWidth,
+                                  height: canvasHeight,
+                                  child: Stack(
+                                    key: const Key('canvas-layer-stack'),
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Positioned.fill(
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTapUp: tool == DrawTool.text
+                                              ? (_) => _focusDocumentAtEnd()
+                                              : null,
+                                          child: CustomPaint(
+                                            painter: StrokePainter(
+                                              const [],
+                                              null,
+                                              background: Color(
+                                                widget.note.backgroundColor,
+                                              ),
+                                              pattern: pattern,
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
+                                      Positioned.fill(
+                                        key: const Key('raster-drawing-layer'),
+                                        child: IgnorePointer(
+                                          child: CustomPaint(
+                                            painter: RasterDrawingPainter(
+                                              tiles: rasterDrawing.tiles,
+                                              pageHeight:
+                                                  canvasPageHeight.round(),
+                                              allTileKeys:
+                                                  rasterDrawing.tileKeys,
+                                              onNeedTiles:
+                                                  rasterDrawing.requestResident,
+                                              legacyStrokes:
+                                                  widget.note.strokes,
+                                              activePreview:
+                                                  active == null || active!.blur
+                                                      ? null
+                                                      : activePreview,
+                                              repaint: canvasRepaint,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      for (var index = 0;
+                                          index < activeStrokeChunks.length;
+                                          index++)
+                                        Positioned.fill(
+                                          key: ValueKey(
+                                            'active-stroke-chunk-$index',
+                                          ),
+                                          child: IgnorePointer(
+                                            child: RepaintBoundary(
+                                              child: CustomPaint(
+                                                painter: StrokePainter(
+                                                  [activeStrokeChunks[index]],
+                                                  null,
+                                                  paintBackground: false,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (active != null && active!.blur)
+                                        _blurStrokeLayer(
+                                          active!,
+                                          priorStrokes: widget.note.strokes
+                                              .where((stroke) => !stroke.blur)
+                                              .toList(),
+                                          layerIndex:
+                                              widget.note.strokes.length,
+                                          key: const Key('active-blur-layer'),
+                                        ),
+                                      if (activeEraser != null)
+                                        _eraseStrokeLayer(
+                                          activeEraser!,
+                                          key: const Key('active-erase-layer'),
+                                        ),
+                                      if (!rasterImagesLoaded || isRasterizing)
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          top: 0,
+                                          height: 2,
+                                          child: IgnorePointer(
+                                            child: Semantics(
+                                              label: 'Preparing drawing',
+                                              liveRegion: true,
+                                              child: ColoredBox(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .primary,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      for (var page = 0;
+                                          page < widget.note.pageCount - 1;
+                                          page++)
+                                        Positioned(
+                                          key: ValueKey(
+                                            'page-divider-${page + 1}',
+                                          ),
+                                          left: 0,
+                                          right: 0,
+                                          top:
+                                              canvasPageHeight * (page + 1) -
+                                                  7,
+                                          height: 14,
+                                          child: const IgnorePointer(
+                                            child: ColoredBox(
+                                              color: Color(0xff34393d),
+                                            ),
+                                          ),
+                                        ),
+                                      if (showText) _canvasTextDocument(),
+                                    ],
                                   ),
-                                ],
-                                if (showText) _canvasTextDocument(),
-                              ],
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          _canvasPageIndicator(),
+                        ],
                       ),
                     );
                   },

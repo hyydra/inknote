@@ -101,7 +101,7 @@ void main() {
         reason: 'a $chip chip is a squashed rectangle, not a square',
       );
     }
-    // The design asks for 48 on a screen this wide; the seven slots used
+    // The design asks for 48 on a screen this wide; the eight slots used
     // to hand the chip only the 39.7 left over by the button's own padding.
     expect(chips.first.width, greaterThanOrEqualTo(44));
   });
@@ -111,7 +111,7 @@ void main() {
     await openEditor(tester, size: const Size(240, 600));
     expect(tester.takeException(), isNull);
     for (final tool in const [
-      'Text', 'Pencil', 'Pen', 'Highlighter', 'Eraser', 'Blur'
+      'Hand', 'Text', 'Pencil', 'Pen', 'Highlighter', 'Eraser', 'Blur'
     ]) {
       final cell = find.byTooltip(tool);
       expect(cell, findsOneWidget, reason: '$tool left the toolbar');
