@@ -806,7 +806,7 @@ void main() {
     expect(tester.getTopRight(drawingToolbar).dx, lessThanOrEqualTo(320));
   });
 
-  testWidgets('two fingers navigate without a separate Hand tool',
+  testWidgets('two fingers pan and zoom beside the hand tool',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -818,7 +818,7 @@ void main() {
       ),
     );
 
-    expect(find.byTooltip('Hand'), findsNothing);
+    expect(find.byTooltip('Hand'), findsOneWidget);
     final viewerFinder = find.byType(InteractiveViewer);
     final viewer = tester.widget<InteractiveViewer>(viewerFinder);
     final origin = tester.getTopLeft(viewerFinder);
@@ -941,6 +941,8 @@ void main() {
     final canvas = find.byType(InteractiveViewer);
     final position = tester.getCenter(canvas);
     expect(find.text('1/1'), findsOneWidget);
+    final indicator = find.byKey(const Key('page-indicator'));
+    final chip = tester.getTopLeft(indicator);
     await tester.sendEventToBinding(
       PointerScrollEvent(
         position: position,
@@ -966,16 +968,14 @@ void main() {
     await tester.pump();
 
     expect(note.pageCount, 2);
-    expect(find.text('1/2'), findsOneWidget);
+    expect(find.text('1/2'), findsNothing);
     expect(find.text('2/2'), findsOneWidget);
     expect(find.byKey(const ValueKey('page-divider-1')), findsOneWidget);
-    final firstNumber = tester.widget<Positioned>(
-      find.byKey(const ValueKey('page-number-1')),
+    expect(
+      tester.getTopLeft(indicator),
+      chip,
+      reason: 'the chip does not scroll with the paper',
     );
-    final secondNumber = tester.widget<Positioned>(
-      find.byKey(const ValueKey('page-number-2')),
-    );
-    expect(secondNumber.top, greaterThan(firstNumber.top!));
   });
 
   testWidgets('eraser removes drawings without touching typed text',

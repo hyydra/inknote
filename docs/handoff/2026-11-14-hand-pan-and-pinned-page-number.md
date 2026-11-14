@@ -46,6 +46,12 @@
 - Local gate on the branch: `flutter analyze` "No issues found!" (exit 0),
   `flutter test` "+121: All tests passed!" (exit 0), `flutter build apk
   --debug` "Built build/app/outputs/flutter-apk/app-debug.apk" (exit 0).
+- The CI-only suite `widget_test/editor_gesture_test.dart` - which
+  `flutter test` does not pick up, but the Android workflow runs on its own
+  line - held two premises this change invalidates. It asserted that no Hand
+  tool exists, and it read the per-page chips by key and compared their
+  vertical order. It now asserts the hand is present and that the single chip
+  keeps its screen position across a scroll. Its 44 tests pass (exit 0).
 - `test/layout_and_theme_test.dart` now includes `Hand` in the narrow-screen
   tappable list, which is the check that would fail if the extra slot pushed a
   control below a fingertip.
