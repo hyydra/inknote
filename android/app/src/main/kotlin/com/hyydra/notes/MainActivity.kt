@@ -22,6 +22,12 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "notes/widget")
             .setMethodCallHandler { call, result ->
+                if (call.method == "hasWidgets") {
+                    // Asked before the Dart side renders anything: a phone with
+                    // no card on the home screen should never pay for a preview.
+                    result.success(NotesWidget.instanceCount(this))
+                    return@setMethodCallHandler
+                }
                 if (call.method != "setNote") {
                     result.notImplemented()
                     return@setMethodCallHandler
