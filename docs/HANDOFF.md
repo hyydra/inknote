@@ -28,7 +28,7 @@
 - [Publish v0.4.21](./handoff/2026-11-12-publish-v0-4-21.md) — complete; published from `38075fe`.
 - Publish v0.4.22 — complete; published from `1d5a5d9` through PR #34, with no separate handoff note of its own.
 - [Publish v0.4.23](./handoff/2026-11-13-publish-v0-4-23.md) — complete; published from `924ca0f` through PR #48, assets verified from their downloaded bytes.
-- [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — merged through PR #47; the workflow patches it describes ship as files under `docs/patches/` and still need a token with the `workflow` scope to apply.
+- [CI and test-infrastructure coverage](./handoff/2026-11-13-ci-platform-coverage.md) — merged through PR #47; the three workflow edits it describes ship as one file under `docs/patches/` and still need a token with the `workflow` scope to apply. Re-measured on 2026-11-14 against `3fec600`: applies cleanly, same `patch-id`, `flutter test` at `+152` on that branch, push refused with the same server message.
 - [Publish v0.4.24](./handoff/2026-11-13-publish-v0-4-24.md) — complete; published from `56aa817` through PR #52, assets verified from their downloaded bytes.
 - Raster residency waits — merged through PR #54 (`0a9da49`); two tests read `residentTileCount` after a fixed `pumpEventQueue()` and failed under CPU load, so the wait became a bounded condition. No separate handoff note.
 - [Pin the page that has ink](./handoff/2026-11-13-pin-the-page-that-has-ink.md) — merged through PR #55 (`c38c4fc`); the home-screen widget pinned blank paper for notes whose drawing starts below the first page. Shipped in v0.4.25.
