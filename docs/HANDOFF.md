@@ -3,6 +3,7 @@
 ## Current state
 
 - Latest published release: v0.4.27, with Android APK and Windows installer.
+- Every build that goes up is written down in [BUILDS.md](./BUILDS.md), newest first, with the digests recomputed from the downloaded bytes; the ledger starts with v0.4.27.
 - Working branch: `main` after PR #63. The whole-repo review fixes, PRs #36-#46, are merged, and so is PR #47 (CI platform coverage); its workflow patches are deliberately checked in as files under `docs/patches/` because this credential cannot push to `.github/workflows/`.
 - Release commit: `05cc57b` (`v0.4.27`, the merge of PR #63, whose head is `e82f1e9`); the previous release was `57742f7` (`v0.4.26`, PR #60's head `5cdb700`).
 - Raster drawing migration, editor controls and tiled raster storage are included in the published v0.4.18 release.
