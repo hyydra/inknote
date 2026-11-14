@@ -37,4 +37,5 @@
 - [Publish v0.4.25](./handoff/2026-11-13-publish-v0-4-25.md) — complete; published from `59c7fe8` through PR #57, assets verified from their downloaded bytes.
 - [The widget refreshes on save](./handoff/2026-11-14-widget-refreshes-on-save.md) — merged through PR #59 (`d6d244f`); the card stopped depending on the "Update home widget" button: a successful autosave debounces into a preview, the platform is asked whether a card exists before anything is rendered, and leaving the app flushes it behind the save. Shipped in v0.4.26.
 - [Publish v0.4.26](./handoff/2026-11-14-publish-v0-4-26.md) — complete; published from `57742f7` through PR #60, assets verified from their downloaded bytes and the change proved by a literal inside `libapp.so`.
+- [A hand that pans and a page number that stays](./handoff/2026-11-14-hand-pan-and-pinned-page-number.md) — opened as PR #62; the hand tool became selectable and pans the paper with one finger, and the page number moved off the paper to the view's fixed top-left corner. Awaiting CI.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.
