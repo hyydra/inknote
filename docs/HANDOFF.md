@@ -34,4 +34,5 @@
 - [Pin the page that has ink](./handoff/2026-11-13-pin-the-page-that-has-ink.md) — merged through PR #55 (`c38c4fc`); the home-screen widget pinned blank paper for notes whose drawing starts below the first page. Shipped in v0.4.25.
 - Drive-sync residency waits — merged through PR #56 (`b4eaa4f`); the debouncer tests paused a fixed 80 ms and 30 ms and read zero counters under CPU load, so the waits became condition waits with a quiet period. No separate handoff note.
 - [Publish v0.4.25](./handoff/2026-11-13-publish-v0-4-25.md) — complete; published from `59c7fe8` through PR #57, assets verified from their downloaded bytes.
+- [The widget refreshes on save](./handoff/2026-11-14-widget-refreshes-on-save.md) — the card stopped depending on the "Update home widget" button: a successful autosave debounces into a preview, the platform is asked whether a card exists before anything is rendered, and leaving the app flushes it behind the save. Needs a release to reach a phone.
 - [Publish v0.4.16](./handoff/2026-11-11-publish-v0-4-16.md) — complete.

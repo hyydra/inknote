@@ -15,6 +15,10 @@ class NotesWidget : AppWidgetProvider() {
         ids.forEach { id -> update(context, manager, id) }
     }
     companion object {
+        fun instanceCount(context: Context): Int =
+            AppWidgetManager.getInstance(context)
+                .getAppWidgetIds(ComponentName(context, NotesWidget::class.java)).size
+
         fun updateAll(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
             val ids = manager.getAppWidgetIds(ComponentName(context, NotesWidget::class.java))

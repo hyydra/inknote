@@ -23,6 +23,7 @@ import 'pennino_theme.dart';
 import 'raster_drawing.dart';
 import 'rich_text_controller.dart';
 import 'update_service.dart';
+import 'widget_refresh.dart';
 
 export 'app_version.dart' show appVersion;
 
@@ -571,6 +572,12 @@ class EditorPage extends StatefulWidget {
 
 class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   static const widgetChannel = MethodChannel('notes/widget');
+
+  /// Keeps the home-screen card in step with the note rather than with the
+  /// button, so a card placed before the first pin is not a permanent
+  /// placeholder.
+  late final WidgetRefreshScheduler widgetRefresh;
+  bool widgetRefreshWarned = false;
   late final TextEditingController titleController;
   late final RichTextEditingController textController;
   late final FocusNode textFocusNode;
@@ -682,6 +689,13 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
       },
       onStatusChanged: _onAutosaveStatus,
     );
+    widgetRefresh = WidgetRefreshScheduler(
+      hasWidgets: _hasNoteWidgets,
+      render: renderPreview,
+      publish: _sendPreviewToWidget,
+      isEnabled: () => Platform.isAndroid,
+      onError: _onWidgetRefreshFailed,
+    );
     textFocusNode = FocusNode()
       ..addListener(() {
         if (mounted) setState(() {});
@@ -705,6 +719,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     autosave.dispose();
+    widgetRefresh.dispose();
     WidgetsBinding.instance.removeObserver(this);
     driveSyncDebouncer.dispose();
     titleController.dispose();
@@ -734,11 +749,14 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       // The process can be suspended and killed here, so what is on screen
-      // goes to disk through the same autosave the edits schedule.
+      // goes to disk through the same autosave the edits schedule. The card
+      // refresh is chained behind that write rather than left to its debounce:
+      // walking to the home screen is the moment the card is looked at, and a
+      // picture still queued two seconds out may never be drawn.
       if (hasUnsavedChanges) {
-        unawaited(autosave.saveNow());
+        unawaited(autosave.saveNow().then((_) => widgetRefresh.flush()));
       } else {
-        unawaited(_finalizeActiveStroke());
+        unawaited(_finalizeActiveStroke().then((_) => widgetRefresh.flush()));
       }
     }
   }
@@ -777,6 +795,12 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
   /// has to say what happened, because an autosave that fails quietly is the
   /// same as an autosave that never existed.
   void _onAutosaveStatus(SaveStatus status) {
+    if (status == SaveStatus.saved) {
+      // The note is on disk, so the card can be redrawn from it. The
+      // scheduler decides when that is worth a picture.
+      widgetRefresh.noteSaved();
+      return;
+    }
     if (status != SaveStatus.failed || !mounted || _flushingForExit) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -2002,6 +2026,35 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     return bytes!.buffer.asUint8List();
   }
 
+  /// How many cards of this app the launcher has on screen.
+  ///
+  /// The count is asked rather than assumed because a preview is not free -
+  /// it decodes the page it paints - and a phone with no card on it should
+  /// never pay for one.
+  Future<bool> _hasNoteWidgets() async {
+    final count = await widgetChannel.invokeMethod<int>('hasWidgets');
+    return (count ?? 0) > 0;
+  }
+
+  Future<void> _sendPreviewToWidget(Uint8List png) =>
+      widgetChannel.invokeMethod<void>('setNote', {
+        'title': widget.note.title,
+        'png': base64Encode(png),
+      });
+
+  /// One quiet complaint per editor, not one per save.
+  ///
+  /// A refresh nobody pressed a button for has no right to interrupt, but it
+  /// must not vanish either: a card that silently keeps the old note is
+  /// indistinguishable from a widget that does not work.
+  void _onWidgetRefreshFailed(Object error) {
+    if (widgetRefreshWarned || !mounted) return;
+    widgetRefreshWarned = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Home screen widget not updated: $error')),
+    );
+  }
+
   Future<void> pinWidget() async {
     await autosave.saveNow();
     if (saveFailed || hasUnsavedChanges) {
@@ -2023,10 +2076,7 @@ class _EditorPageState extends State<EditorPage> with WidgetsBindingObserver {
     }
     try {
       final png = await renderPreview();
-      await widgetChannel.invokeMethod('setNote', {
-        'title': widget.note.title,
-        'png': base64Encode(png),
-      });
+      await _sendPreviewToWidget(png);
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
