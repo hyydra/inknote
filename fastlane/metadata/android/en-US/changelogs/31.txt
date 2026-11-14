@@ -1,0 +1,1 @@
+One finger now moves the page: pick the hand tool at the start of the ink row and drag the paper. The page number has left the paper for the top-left corner of the view, where it stays while you pan and zoom and names the page you are looking at.
