@@ -3,7 +3,9 @@
 - Goal: one finger moves the paper when the hand tool is chosen, and the page
   number sits in the view's top-left corner instead of riding the paper.
 - Owner: Qoder.
-- State: implemented on `canvas-hand-pan`; local gates green, awaiting CI.
+- State: merged through PR #62 (`2565e0e`) and published in v0.4.27
+  (`05cc57b`); the release record is
+  [publish-v0-4-27](./2026-11-14-publish-v0-4-27.md).
 
 ## Log
 
@@ -56,7 +58,11 @@
   tappable list, which is the check that would fail if the extra slot pushed a
   control below a fingertip.
 
+## Running now
+
+- Nothing; the work is merged and shipped.
+
 ## Next
 
-- CI on the pull request, then merge. A release needs its own bump and tag;
-  the `fastlane` changelog file is not read by any code or workflow here.
+- No Android device is attached here, so how the pan feels under a real finger
+  and how the chip reads over dark paper are the reporter's to check.
